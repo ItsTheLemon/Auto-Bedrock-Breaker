@@ -36,8 +36,7 @@ import fi.dy.masa.malilib.gui.GuiConfigsBase.ConfigOptionWrapper
 import fi.dy.masa.malilib.hotkeys.IKeybindManager
 import fi.dy.masa.malilib.hotkeys.IKeybindProvider
 import fi.dy.masa.malilib.util.StringUtils
-//? if <1.21
-//import fi.dy.masa.malilib.util.FileUtils
+import fi.dy.masa.malilib.util.FileUtils
 //? if >=1.21.11 {
 import fi.dy.masa.malilib.util.data.json.JsonUtils
 //?} else
@@ -52,8 +51,10 @@ import java.nio.file.Files
 import kotlin.io.path.exists
 
 object Configs : IConfigHandler, IKeybindProvider {
-    //? if >=1.21 {
-    private val configFile = MaLiLibReference.CONFIG_DIR.resolve("bedrock-miner.json")
+    //? if >=1.21.11 {
+    private val configFile = FileUtils.getConfigDirectory().resolve("bedrock-miner.json")
+    //?} else if >=1.21 {
+    //private val configFile = MaLiLibReference.CONFIG_DIR.resolve("bedrock-miner.json")
     //?} else
     //private val configFile = File(FileUtils.getConfigDirectory(), "bedrock-miner.json")
 
@@ -373,10 +374,14 @@ object Configs : IConfigHandler, IKeybindProvider {
 
     override fun save() {
         try {
-            //? if >=1.21 {
-            if (!MaLiLibReference.CONFIG_DIR.exists()) {
-                Files.createDirectories(MaLiLibReference.CONFIG_DIR)
+            //? if >=1.21.11 {
+            if (!FileUtils.getConfigDirectory().exists()) {
+                Files.createDirectories(FileUtils.getConfigDirectory())
             }
+            //?} else if >=1.21 {
+            //if (!MaLiLibReference.CONFIG_DIR.exists()) {
+            //    Files.createDirectories(MaLiLibReference.CONFIG_DIR)
+            //}
             //?} else
             //FileUtils.getConfigDirectory().mkdirs()
             val root = JsonObject()

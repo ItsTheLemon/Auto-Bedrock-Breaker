@@ -1,7 +1,7 @@
 mod.id = "bedrock-miner"
 mod.name = "Bedrock-Miner"
 mod.group = "com.github.lxyan2333.bedrockminer"
-mod.version = "2.0.9"
+mod.version = "2.0.10"
 
 deps.fabric_loader = "0.19.3"
 deps.fabric_kotlin = "1.13.12+kotlin.2.4.0"
@@ -84,7 +84,7 @@ mod.mc_releases = ["1.21.11"]
 
 deps.fabric_api = "0.141.4+1.21.11"
 deps.malilib_mc = "1.21.11"
-deps.malilib = "0.27.13"
+deps.malilib = "0.27.19"
 deps.mod_menu = "17.0.0"
 
 ["26.1.2"]
@@ -93,7 +93,7 @@ mod.mc_releases = ["26.1.2"]
 
 deps.fabric_api = "0.154.2+26.1.2"
 deps.malilib_mc = "26.1.2"
-deps.malilib = "0.28.9"
+deps.malilib = "0.28.11"
 deps.mod_menu = "18.0.0"
 
 ["26.2"]
@@ -102,5 +102,5 @@ mod.mc_releases = ["26.2"]
 
 deps.fabric_api = "0.154.0+26.2"
 deps.malilib_mc = "26.2"
-deps.malilib = "0.29.2"
+deps.malilib = "0.29.5"
 deps.mod_menu = "20.0.1"
