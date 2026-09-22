@@ -3,10 +3,13 @@ package com.github.lxyan2333.bedrockminer.client.render
 import com.github.lxyan2333.bedrockminer.client.area.AreaRestriction
 import com.github.lxyan2333.bedrockminer.client.compat.MinecraftClientCompat
 import com.github.lxyan2333.bedrockminer.client.config.Configs
-//? if >=26.1 {
-import com.mojang.blaze3d.buffers.GpuBufferSlice
+//? if >=26.3 {
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.blaze3d.pipeline.RenderTarget
-//?}
+//?} else if >=26.1 {
+/*import com.mojang.blaze3d.buffers.GpuBufferSlice
+import com.mojang.blaze3d.pipeline.RenderTarget
+*///?}
 //? if <1.21 {
 /*import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
@@ -42,8 +45,22 @@ import org.joml.Vector4f
 
 
 object AreaRenderer : IRenderer {
-    //? if >=26.1 {
+    //? if >=26.3 {
     override fun onRenderWorldLast(
+        fb: RenderTarget,
+        cameraState: CameraRenderState,
+        culling: Frustum,
+        buffers: RenderBuffers,
+        terrainFog: GpuBufferSlice,
+        fogColor: Vector4f,
+        profiler: ProfilerFiller
+    ) {
+        profiler.push("bedrock_miner_area_restriction")
+        renderAreas()
+        profiler.pop()
+    }
+    //?} else if >=26.1 {
+    /*override fun onRenderWorldLast(
         fb: RenderTarget,
         modelViewMatrix: Matrix4fc,
         cameraState: CameraRenderState,
@@ -57,7 +74,7 @@ object AreaRenderer : IRenderer {
         renderAreas()
         profiler.pop()
     }
-    //?} else if >=1.20.5 {
+    *///?} else if >=1.20.5 {
     /*override fun onRenderWorldLast(
         posMatrix: Matrix4f,
         projMatrix: Matrix4f

@@ -3,7 +3,7 @@ plugins {
 }
 
 val ciVersion: String? = System.getenv("CI_VERSION")
-if (ciVersion != null) sc active null else stonecutter active "26.2"
+if (ciVersion != null) sc active null else stonecutter active "26.3"
 
 stonecutter parameters {
 	swaps["mod_version"] = "\"${property("mod.version")}\";"
