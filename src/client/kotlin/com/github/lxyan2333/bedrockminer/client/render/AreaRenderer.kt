@@ -813,6 +813,7 @@ object AreaRenderer : IRenderer {
             AutoPilot.Phase.CLEARING -> StringUtils.translate("bedrockminer.hud.autopilot.clearing")
             AutoPilot.Phase.RELOCATING -> StringUtils.translate("bedrockminer.hud.autopilot.relocating")
             AutoPilot.Phase.EATING -> StringUtils.translate("bedrockminer.hud.autopilot.eating")
+            AutoPilot.Phase.ESCAPING -> StringUtils.translate("bedrockminer.hud.autopilot.escaping")
             AutoPilot.Phase.PAUSING -> StringUtils.translate("bedrockminer.hud.autopilot.mining", 0)
         }
         val phaseColor = when (AutoPilot.hudPhase) {
@@ -821,6 +822,7 @@ object AreaRenderer : IRenderer {
             AutoPilot.Phase.CLEARING -> 0xFFFFA040.toInt()
             AutoPilot.Phase.RELOCATING -> 0xFF40C8FF.toInt()
             AutoPilot.Phase.EATING -> 0xFFFF8899.toInt()
+            AutoPilot.Phase.ESCAPING -> 0xFFCC66FF.toInt()
             AutoPilot.Phase.PAUSING -> 0xFFB0B0B0.toInt()
         }
 

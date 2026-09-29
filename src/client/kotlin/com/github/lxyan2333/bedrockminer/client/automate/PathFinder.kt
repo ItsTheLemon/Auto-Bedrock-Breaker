@@ -120,6 +120,28 @@ object PathFinder {
         return result
     }
 
+    /**
+     * A cell with no exit on any side: every neighbor is a 2-high wall, so
+     * neither walking out nor a one-block jump can leave it. The pathfinder
+     * never drops into such pits and the autopilot pillars out of them.
+     */
+    fun isTrapCell(level: Level, cell: BlockPos): Boolean {
+        for ((dx, dz) in CARDINALS) {
+            val side = BlockPos(cell.x + dx, cell.y, cell.z + dz)
+            // Walk out on the same level.
+            if (PlayerMover.isPassable(level, side) && PlayerMover.isPassable(level, side.above())) return false
+            // Jump out over a one-block step (needs headroom above the cell).
+            if (!PlayerMover.isPassable(level, side) &&
+                PlayerMover.isPassable(level, side.above()) &&
+                PlayerMover.isPassable(level, side.above(2)) &&
+                PlayerMover.isPassable(level, cell.above(2))
+            ) {
+                return false
+            }
+        }
+        return true
+    }
+
     private fun resolveStart(level: Level, start: BlockPos): BlockPos {
         if (isStandable(level, start)) return start
         // Below (falling / standing on an edge with the cell itself floating).
@@ -178,7 +200,10 @@ object PathFinder {
                 while (depth <= maxDrop && origin.y - cell.y <= DOWN_LIMIT) {
                     if (!PlayerMover.isPassable(level, cell)) break // fell into a wall: invalid
                     if (!PlayerMover.isPassable(level, cell.below())) {
-                        visit(cell, 1.0 + 0.3 * depth)
+                        // Never drop 2+ into a pit that has no way back out.
+                        if (depth < 2 || !isTrapCell(level, cell)) {
+                            visit(cell, 1.0 + 0.3 * depth)
+                        }
                         break
                     }
                     cell = cell.below()

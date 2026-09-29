@@ -9,6 +9,7 @@ import com.github.lxyan2333.bedrockminer.client.compat.MinecraftClientCompat
 import com.github.lxyan2333.bedrockminer.client.config.Configs
 import com.github.lxyan2333.bedrockminer.client.message.Messager
 import fi.dy.masa.malilib.util.StringUtils
+import kotlinx.coroutines.launch
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource
 import net.minecraft.client.Minecraft
 import net.minecraft.client.player.LocalPlayer
@@ -100,14 +101,21 @@ object AutoPilot {
     /** No progress at all for this long: self-heal instead of sitting there. */
     private const val STALL_RESET_TICKS = 600
 
-    enum class Phase { PAUSING, MINING, COLLECTING, CLEARING, RELOCATING, EATING }
+    enum class Phase { PAUSING, MINING, COLLECTING, CLEARING, RELOCATING, EATING, ESCAPING }
 
     // -- auto eat --
-    /** Pause and eat when food drops to 3 hunger bars (6 points). */
-    private const val EAT_TRIGGER_FOOD = 6
-    /** Keep eating until at least this much food. */
-    private const val EAT_UNTIL_FOOD = 12
+    /** Eat when hunger drops 3 bars BELOW FULL (20 - 6 = 14 points): the
+     *  goal is to always stay near full, never to flirt with starvation. */
+    private const val EAT_TRIGGER_FOOD = 14
+    /** Eat back to completely full. */
+    private const val EAT_UNTIL_FOOD = 20
     private const val EAT_PHASE_TIMEOUT_TICKS = 400
+
+    // -- pit escape --
+    private const val ESCAPE_TIMEOUT_TICKS = 300
+    private const val ESCAPE_MAX_PILLARS = 5
+    /** How often (ticks) the trapped-in-a-pit check runs. */
+    private const val TRAP_CHECK_INTERVAL = 10
 
     var active = false
         private set
@@ -431,6 +439,25 @@ object AutoPilot {
             return
         }
 
+        // Physically trapped in a pit (fell in, or the floor got mined)?
+        // Pillar out with a placeable block: jump, place beneath, repeat.
+        if (phase != Phase.ESCAPING && tick % TRAP_CHECK_INTERVAL == 0L &&
+            !AutoMiner.hasActiveFlows() &&
+            MinecraftClientCompat.isOnGround(player) &&
+            PathFinder.isTrapCell(level, player.blockPosition())
+        ) {
+            if (pillarItem(player) != null) {
+                event("bedrockminer.hud.event.escape")
+                escapeStage = 0
+                escapePillars = 0
+                escapeTicks = 0
+                enterPhase(Phase.ESCAPING)
+            } else {
+                deactivate("bedrockminer.message.autopilot.stuck")
+                return
+            }
+        }
+
         // Hungry? Pause everything (once running setups drained) and eat.
         if (Configs.Generic.AUTO_EAT.booleanValue && phase != Phase.EATING &&
             player.foodData.foodLevel <= EAT_TRIGGER_FOOD &&
@@ -456,6 +483,8 @@ object AutoPilot {
             Phase.RELOCATING -> tickRelocating(level, player, area)
 
             Phase.EATING -> tickEating(player)
+
+            Phase.ESCAPING -> tickEscaping(level, player)
         }
 
         // Phases may have just changed: recompute so AutoMiner (which ticks
@@ -820,6 +849,13 @@ object AutoPilot {
 
     private var eatTicks = 0
 
+    // escaping
+    private var escapeStage = 0
+    private var escapeStartY = 0.0
+    private var escapeFeetCell: BlockPos? = null
+    private var escapePillars = 0
+    private var escapeTicks = 0
+
     /** Stand still and eat until comfortably fed, then resume mining. */
     private fun tickEating(player: LocalPlayer) {
         PlayerMover.clear()
@@ -848,6 +884,71 @@ object AutoPilot {
             return // verify the switch next tick
         }
         gameMode?.useItem(player, net.minecraft.world.InteractionHand.MAIN_HAND)
+    }
+
+    /** The block used to pillar out of a pit: pistons first, then support. */
+    private fun pillarItem(player: LocalPlayer): net.minecraft.world.item.Item? {
+        if (InventoryManager.countItem(Blocks.PISTON.asItem()) > 0) return Blocks.PISTON.asItem()
+        val support = Configs.Generic.supportBlock.asItem()
+        if (InventoryManager.countItem(support) > 0) return support
+        return null
+    }
+
+    /**
+     * Jump-and-place escape: while airborne above the old floor cell, place
+     * a block into it, land on it, repeat until an exit exists.
+     */
+    private fun tickEscaping(level: Level, player: LocalPlayer) {
+        PlayerMover.clear()
+        markProgress()
+        escapeTicks++
+        if (escapeTicks > ESCAPE_TIMEOUT_TICKS || escapePillars >= ESCAPE_MAX_PILLARS) {
+            deactivate("bedrockminer.message.autopilot.stuck")
+            return
+        }
+        if (!PathFinder.isTrapCell(level, player.blockPosition())) {
+            // A way out exists again: back to work.
+            AutoMiner.clearCooldowns()
+            AutoMiner.requestScan()
+            enterPhase(Phase.MINING)
+            return
+        }
+
+        when (escapeStage) {
+            0 -> if (MinecraftClientCompat.isOnGround(player)) {
+                escapeFeetCell = player.blockPosition()
+                escapeStartY = player.position().y
+                val motion = player.deltaMovement
+                player.setDeltaMovement(motion.x * 0.2, 0.42, motion.z * 0.2)
+                escapeStage = 1
+            }
+
+            1 -> {
+                if (player.position().y > escapeStartY + 0.9) {
+                    // High enough: place the block into the old floor cell.
+                    val cell = escapeFeetCell
+                    val item = pillarItem(player)
+                    if (cell != null && item != null) {
+                        val scope = BreakingFlowController.scope ?: BreakingFlowController.startConsumer()
+                        scope.launch {
+                            com.github.lxyan2333.bedrockminer.client.breaking.BlockPlacer.simpleBlockPlacement(cell, item)
+                        }
+                    }
+                    escapeStage = 2
+                } else if (escapeTicks % 20 == 19 && MinecraftClientCompat.isOnGround(player)) {
+                    escapeStage = 0 // the jump did not take, try again
+                }
+            }
+
+            2 -> if (MinecraftClientCompat.isOnGround(player) &&
+                player.position().y > escapeStartY + 0.5
+            ) {
+                escapePillars++
+                escapeStage = 0
+            } else if (escapeTicks % 30 == 29 && MinecraftClientCompat.isOnGround(player)) {
+                escapeStage = 0 // placement missed, retry the jump
+            }
+        }
     }
 
     /** Food slot to eat from; golden carrots preferred, junk food excluded. */
