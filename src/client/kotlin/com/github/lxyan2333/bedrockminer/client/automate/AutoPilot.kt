@@ -307,6 +307,7 @@ object AutoPilot {
     fun abandon() {
         if (!active) return
         active = false
+        forceUseKey(false)
         PlayerMover.clear()
         AutoMiner.launchesSuppressed = false
     }
@@ -316,6 +317,7 @@ object AutoPilot {
     private fun deactivate(chatKey: String? = null, vararg args: Any) {
         if (!active) return
         active = false
+        forceUseKey(false)
         PlayerMover.clear()
         AutoMiner.launchesSuppressed = false
         if (Configs.AutoMine.ENABLED.booleanValue) {
@@ -361,6 +363,7 @@ object AutoPilot {
     }
 
     private fun enterPhase(target: Phase, pause: Int = PHASE_PAUSE_TICKS) {
+        forceUseKey(false)
         PlayerMover.clear()
         // Force a fresh in-range check on the next mining tick.
         reachableCacheTick = Long.MIN_VALUE / 2
@@ -849,6 +852,21 @@ object AutoPilot {
 
     private var eatTicks = 0
 
+    /** Whether we are holding the vanilla use key down programmatically. */
+    private var useKeyForced = false
+
+    /**
+     * Eating must go through the real input path: a direct useItem() call is
+     * cancelled next tick by vanilla, which releases the use item whenever
+     * the use key is not physically held. Holding the key makes vanilla run
+     * the whole eat exactly like a player holding right click.
+     */
+    private fun forceUseKey(down: Boolean) {
+        if (useKeyForced == down) return
+        useKeyForced = down
+        Minecraft.getInstance().options.keyUse.setDown(down)
+    }
+
     // escaping
     private var escapeStage = 0
     private var escapeStartY = 0.0
@@ -856,7 +874,7 @@ object AutoPilot {
     private var escapePillars = 0
     private var escapeTicks = 0
 
-    /** Stand still and eat until comfortably fed, then resume mining. */
+    /** Stand still and eat until completely fed, then resume mining. */
     private fun tickEating(player: LocalPlayer) {
         PlayerMover.clear()
         markProgress()
@@ -867,23 +885,28 @@ object AutoPilot {
             eatTicks > EAT_PHASE_TIMEOUT_TICKS ||
             (!player.isUsingItem && findFoodSlot(player) == -1)
         if (done) {
+            forceUseKey(false)
             if (player.isUsingItem) gameMode?.releaseUsingItem(player)
             AutoMiner.requestScan()
             enterPhase(Phase.MINING)
             return
         }
 
-        // Already chewing: let it finish.
-        if (player.isUsingItem) return
+        // Tilt the view up while chewing so the use click can never interact
+        // with a block in front of the crosshair.
+        player.xRot = (player.xRot - 8f).coerceAtLeast(-60f)
 
         val slot = findFoodSlot(player)
-        if (slot == -1) return
         val selected = MinecraftClientCompat.getSelectedItem(player.inventory)
         if (!isEdible(selected)) {
-            InventoryManager.selectItemNow(slot)
-            return // verify the switch next tick
+            // Wrong item in hand: release, switch, verify next tick.
+            forceUseKey(false)
+            if (slot != -1) InventoryManager.selectItemNow(slot)
+            return
         }
-        gameMode?.useItem(player, net.minecraft.world.InteractionHand.MAIN_HAND)
+        // Food in hand: hold right click, vanilla does the actual eating and
+        // chain-eats until we let go at full hunger.
+        forceUseKey(true)
     }
 
     /** The block used to pillar out of a pit: pistons first, then support. */
