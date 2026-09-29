@@ -207,6 +207,13 @@ object AutoPilot {
 
     /** Whether the automation cares about this item type (for the overlay). */
     fun isWantedItem(item: Item): Boolean = active && wantedItems().contains(item)
+
+    /** Whether an item is currently set aside (deferred), for the overlay. */
+    fun isItemDeferred(id: Int): Boolean = active && deferredItems.containsKey(id)
+
+    /** Whether the item's spot is trivially walkable right now, for the overlay. */
+    fun isItemAccessible(level: Level, player: LocalPlayer, entity: ItemEntity): Boolean =
+        easyToReach(level, player, entity)
     /** Small rolling activity log for the HUD. */
     private val recentEvents = ArrayDeque<Pair<String, Long>>()
 
