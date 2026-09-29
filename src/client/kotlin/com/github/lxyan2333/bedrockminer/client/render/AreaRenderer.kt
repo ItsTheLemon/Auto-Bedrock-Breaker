@@ -436,6 +436,203 @@ object AreaRenderer : IRenderer {
                         cameraPos, hueColor(hue, alpha), if (trail == 0) width else thinWidth,
                     )
                 }
+
+                // Graph-paper scan grid clipped to the radar disc.
+                val gridColor = hueColor((hue + 0.3f) % 1f, 0.16f)
+                val gridMax = kotlin.math.floor(radius).toInt()
+                for (g in -gridMax..gridMax) {
+                    val half = kotlin.math.sqrt(radius * radius - g * g.toDouble())
+                    line(
+                        buffer,
+                        Vec3(feet.x + g, feet.y + 0.03, feet.z - half),
+                        Vec3(feet.x + g, feet.y + 0.03, feet.z + half),
+                        cameraPos, gridColor, 2.0f,
+                    )
+                    line(
+                        buffer,
+                        Vec3(feet.x - half, feet.y + 0.03, feet.z + g),
+                        Vec3(feet.x + half, feet.y + 0.03, feet.z + g),
+                        cameraPos, gridColor, 2.0f,
+                    )
+                }
+
+                // Cardinal compass ticks, north marked in red.
+                for (cardinal in 0 until 4) {
+                    val angle = cardinal * Math.PI / 2.0
+                    val cos = kotlin.math.cos(angle)
+                    val sin = kotlin.math.sin(angle)
+                    val isNorth = cardinal == 3 // -Z
+                    val color = if (isNorth) Color4f(1f, 0.3f, 0.3f, 0.95f) else Color4f(1f, 1f, 1f, 0.7f)
+                    line(
+                        buffer,
+                        Vec3(feet.x + radius * 0.75 * cos, feet.y + 0.06, feet.z + radius * 0.75 * sin),
+                        Vec3(feet.x + radius * 1.08 * cos, feet.y + 0.06, feet.z + radius * 1.08 * sin),
+                        cameraPos, color, width,
+                    )
+                }
+
+                // Two vertical range arcs, rotating with the sweep: dome feel.
+                for (arc in 0..1) {
+                    val phi = sweepBase * 0.5 + arc * Math.PI / 2.0
+                    val axisX = kotlin.math.cos(phi)
+                    val axisZ = kotlin.math.sin(phi)
+                    var previousArc: Vec3? = null
+                    for (s in 0..16) {
+                        val a = s.toDouble() / 16.0 * Math.PI
+                        val h = kotlin.math.cos(a)
+                        val v = kotlin.math.sin(a)
+                        val point = Vec3(
+                            feet.x + radius * h * axisX,
+                            feet.y + radius * 0.62 * v,
+                            feet.z + radius * h * axisZ,
+                        )
+                        previousArc?.let { line(buffer, it, point, cameraPos, hueColor((hue + 0.5f) % 1f, 0.28f), thinWidth) }
+                        previousArc = point
+                    }
+                }
+
+                // Heading projection: dashed vector where the player is moving.
+                val motion = player.deltaMovement
+                val speedH = kotlin.math.sqrt(motion.x * motion.x + motion.z * motion.z)
+                if (speedH > 0.03) {
+                    val hx = motion.x / speedH
+                    val hz = motion.z / speedH
+                    for (seg in 0 until 6) {
+                        val from = 0.6 + seg * 0.55
+                        line(
+                            buffer,
+                            Vec3(feet.x + hx * from, feet.y + 0.12, feet.z + hz * from),
+                            Vec3(feet.x + hx * (from + 0.32), feet.y + 0.12, feet.z + hz * (from + 0.32)),
+                            cameraPos, Color4f(0.3f, 1f, 0.9f, 0.9f - seg * 0.12f), thinWidth,
+                        )
+                    }
+                }
+            }
+
+            // Targeting brackets on the eight corners of the mining box.
+            AutoMiner.previewArea()?.let { area ->
+                val bracketColor = hueColor(
+                    ((System.currentTimeMillis() % 6000L).toFloat() / 6000f + 0.5f) % 1f, 0.95f,
+                )
+                val len = 0.7
+                for (cx in 0..1) for (cy in 0..1) for (cz in 0..1) {
+                    val x = if (cx == 0) area.minX.toDouble() else area.maxX + 1.0
+                    val y = if (cy == 0) area.minY.toDouble() else area.maxY + 1.0
+                    val z = if (cz == 0) area.minZ.toDouble() else area.maxZ + 1.0
+                    val dx = if (cx == 0) len else -len
+                    val dy = if (cy == 0) len else -len
+                    val dz = if (cz == 0) len else -len
+                    val corner = Vec3(x, y, z)
+                    line(buffer, corner, corner.add(dx, 0.0, 0.0), cameraPos, bracketColor, width)
+                    line(buffer, corner, corner.add(0.0, dy, 0.0), cameraPos, bracketColor, width)
+                    line(buffer, corner, corner.add(0.0, 0.0, dz), cameraPos, bracketColor, width)
+                }
+            }
+
+            // Expanding pulse rings under every block being broken.
+            run {
+                val phaseTime = (System.currentTimeMillis() % 1100L).toDouble() / 1100.0
+                for ((index, pos) in flowTargets.take(8).withIndex()) {
+                    val fraction = ((phaseTime + index * 0.13) % 1.0)
+                    val ringRadius = 0.2 + fraction * 1.1
+                    val alpha = ((1.0 - fraction) * 0.85).toFloat()
+                    var previousRing: Vec3? = null
+                    for (s in 0..14) {
+                        val a = s.toDouble() / 14.0 * Math.PI * 2.0
+                        val point = Vec3(
+                            pos.x + 0.5 + ringRadius * kotlin.math.cos(a),
+                            pos.y + 0.04,
+                            pos.z + 0.5 + ringRadius * kotlin.math.sin(a),
+                        )
+                        previousRing?.let { line(buffer, it, point, cameraPos, COLOR_BREAKING.withAlpha(alpha), thinWidth) }
+                        previousRing = point
+                    }
+                }
+                // Mesh linking concurrent break targets: the work network.
+                for (i in 0 until flowTargets.size - 1) {
+                    if (i >= 11) break
+                    val a = flowTargets[i]
+                    val b = flowTargets[i + 1]
+                    line(
+                        buffer,
+                        Vec3(a.x + 0.5, a.y + 0.5, a.z + 0.5),
+                        Vec3(b.x + 0.5, b.y + 0.5, b.z + 0.5),
+                        cameraPos, COLOR_BREAKING.withAlpha(0.3f), 2.0f,
+                    )
+                }
+            }
+
+            // Bobbing chevron pointer over the current destination and item.
+            run {
+                val bobTime = (System.currentTimeMillis() % 900L).toDouble() / 900.0
+                val bob = 0.22 * kotlin.math.sin(bobTime * Math.PI * 2.0)
+                val pointerHue = hueColor((System.currentTimeMillis() % 3000L).toFloat() / 3000f, 1f)
+                val pointerTargets = ArrayList<Vec3>()
+                relocateBlock?.let { pointerTargets.add(Vec3(it.x + 0.5, it.y + 1.9 + bob, it.z + 0.5)) }
+                item?.let { pointerTargets.add(it.position().add(0.0, 1.1 + bob, 0.0)) }
+                for (tip in pointerTargets) {
+                    line(buffer, tip.add(-0.28, 0.42, 0.0), tip, cameraPos, pointerHue, width)
+                    line(buffer, tip.add(0.28, 0.42, 0.0), tip, cameraPos, pointerHue, width)
+                    line(buffer, tip.add(0.0, 0.42, -0.28), tip, cameraPos, pointerHue, width)
+                    line(buffer, tip.add(0.0, 0.42, 0.28), tip, cameraPos, pointerHue, width)
+                }
+            }
+
+            // Walk line, planned route with step-colored marching segments,
+            // node markers and the ground goal marker.
+            val walkTarget = PlayerMover.currentTarget
+            if (walkTarget != null) {
+                val color = when {
+                    sidestepBlock != null -> COLOR_STAND
+                    AutoPilot.phase == AutoPilot.Phase.COLLECTING ||
+                        AutoPilot.phase == AutoPilot.Phase.MINING || item != null -> COLOR_WALK_COLLECT
+                    else -> COLOR_WALK_RELOCATE
+                }
+                line(
+                    buffer,
+                    player.position().add(0.0, 0.9, 0.0),
+                    walkTarget.add(0.0, 0.3, 0.0),
+                    cameraPos, color, width,
+                )
+                val route = PlayerMover.currentPath
+                if (route.isNotEmpty()) {
+                    val time = (System.currentTimeMillis() % 900L).toFloat() / 900f
+                    var previous = player.position().add(0.0, 0.15, 0.0)
+                    var previousY = player.position().y
+                    for ((index, waypoint) in route.take(32).withIndex()) {
+                        val next = Vec3(waypoint.x + 0.5, waypoint.y + 0.15, waypoint.z + 0.5)
+                        val base = when {
+                            waypoint.y > previousY + 0.5 -> COLOR_STEP_UP
+                            waypoint.y < previousY - 0.5 -> COLOR_STEP_DOWN
+                            else -> color
+                        }
+                        val pulse = kotlin.math.sin(index * 0.45 - time * Math.PI * 2.0).toFloat()
+                        val alpha = 0.55f + 0.45f * ((pulse + 1f) / 2f)
+                        line(buffer, previous, next, cameraPos, base.withAlpha(alpha), maxOf(3.0f, width - 0.5f))
+                        RenderUtils.drawBoxAllEdgesBatchedLines(
+                            (next.x - 0.09 - cameraPos.x).toFloat(), (next.y - 0.09 - cameraPos.y).toFloat(),
+                            (next.z - 0.09 - cameraPos.z).toFloat(),
+                            (next.x + 0.09 - cameraPos.x).toFloat(), (next.y + 0.09 - cameraPos.y).toFloat(),
+                            (next.z + 0.09 - cameraPos.z).toFloat(),
+                            base.withAlpha(0.9f), thinWidth, buffer,
+                        )
+                        previous = next
+                        previousY = waypoint.y.toDouble()
+                    }
+                }
+                RenderUtils.drawBoxAllEdgesBatchedLines(
+                    (walkTarget.x - 0.18 - cameraPos.x).toFloat(), (walkTarget.y + 0.02 - cameraPos.y).toFloat(),
+                    (walkTarget.z - 0.18 - cameraPos.z).toFloat(),
+                    (walkTarget.x + 0.18 - cameraPos.x).toFloat(), (walkTarget.y + 0.14 - cameraPos.y).toFloat(),
+                    (walkTarget.z + 0.18 - cameraPos.z).toFloat(),
+                    color, width, buffer,
+                )
+            }
+
+            val meshData = buffer.build()
+            if (meshData != null) {
+                ctx.draw(meshData, false, true)
+                meshData.close()
             }
         } catch (err: Exception) {
             MaLiLib.LOGGER.error("AreaRenderer.renderAutomationOverlay(): Draw exception; {}", err.message)
