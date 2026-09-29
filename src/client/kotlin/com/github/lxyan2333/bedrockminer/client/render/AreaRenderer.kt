@@ -565,6 +565,19 @@ object AreaRenderer : IRenderer {
                         val marching = kotlin.math.sin(index * 0.45 - time * Math.PI * 2.0).toFloat()
                         val alpha = 0.55f + 0.45f * ((marching + 1f) / 2f)
                         beam(buffer, previous, next, cameraPos, base.withAlpha(alpha), thick)
+                        // Shade the surface tile it plans to step on: bright
+                        // for the next step, fading along the route, breathing
+                        // with the marching pulse.
+                        val tileAlpha = ((if (index == 0) 0.42f else 0.30f - index * 0.007f).coerceAtLeast(0.10f)) *
+                            (0.75f + 0.25f * ((marching + 1f) / 2f))
+                        quad(
+                            buffer,
+                            Vec3(waypoint.x + 0.06, waypoint.y + 0.02, waypoint.z + 0.06),
+                            Vec3(waypoint.x + 0.94, waypoint.y + 0.02, waypoint.z + 0.06),
+                            Vec3(waypoint.x + 0.94, waypoint.y + 0.02, waypoint.z + 0.94),
+                            Vec3(waypoint.x + 0.06, waypoint.y + 0.02, waypoint.z + 0.94),
+                            cameraPos, base.withAlpha(tileAlpha),
+                        )
                         beamBox(
                             buffer,
                             next.x - 0.09, next.y - 0.09, next.z - 0.09,
