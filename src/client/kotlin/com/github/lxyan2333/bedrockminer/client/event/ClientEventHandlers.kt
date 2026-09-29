@@ -3,7 +3,10 @@ package com.github.lxyan2333.bedrockminer.client.event
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback
 import net.fabricmc.fabric.api.event.player.UseBlockCallback
 import net.minecraft.world.InteractionResult
+import com.github.lxyan2333.bedrockminer.client.automate.AutoPilot
+import com.github.lxyan2333.bedrockminer.client.automine.AutoMiner
 import com.github.lxyan2333.bedrockminer.client.breaking.BreakingFlowController
+import com.github.lxyan2333.bedrockminer.client.command.ModClientCommands
 import com.github.lxyan2333.bedrockminer.client.breaking.ClientTickScheduler
 import com.github.lxyan2333.bedrockminer.client.config.Configs
 import com.github.lxyan2333.bedrockminer.client.config.ClientConfigHandler
@@ -43,8 +46,11 @@ object ClientEventHandlers {
         ConfigManager.getInstance().registerConfigHandler("bedrock-miner", Configs)
         Configs.init()
         RenderEventHandler.getInstance().registerWorldLastRenderer(AreaRenderer)
+        //? if >=26.2
+        RenderEventHandler.getInstance().registerInGameGuiRenderer(AreaRenderer)
         ModNetwork.registerPayloadTypes()
         ClientNetworkHandler.registerClientHandlers()
+        ModClientCommands.register()
 
         UseBlockCallback.EVENT.register { player, world, _, hitResult ->
             if (world.isClientSide && player.mainHandItem.isEmpty && world.getBlockState(hitResult.blockPos).block == Blocks.BEDROCK) {
@@ -62,18 +68,29 @@ object ClientEventHandlers {
         }
 
         //? if >= 26.2 {
-        ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register { _, _ -> BreakingFlowController.cancelAllFlows() }
+        ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register { _, _ ->
+            AutoPilot.abandon()
+            BreakingFlowController.cancelAllFlows()
+            AutoMiner.reset()
+        }
         ClientTickEvents.END_LEVEL_TICK.register {
+            // AutoPilot first: it decides whether AutoMiner may launch this tick.
+            AutoPilot.onTick()
             ClientTickScheduler.onTick()
+            AutoMiner.onTick()
         }
         //? } else {
         /*ClientTickEvents.START_CLIENT_TICK.register { client ->
             val currentLevel = client.level ?: return@register
             if (currentLevel != lastLevel) {
                 lastLevel = currentLevel
+                AutoPilot.abandon()
                 BreakingFlowController.cancelAllFlows()
+                AutoMiner.reset()
             }
+            AutoPilot.onTick()
             ClientTickScheduler.onTick()
+            AutoMiner.onTick()
         }
         *///?}
 
@@ -84,7 +101,9 @@ object ClientEventHandlers {
         }
 
         ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
+            AutoPilot.abandon()
             BreakingFlowController.onDisconnect()
+            AutoMiner.reset()
             ClientConfigHandler.resetOnDisconnect()
         }
     }

@@ -1,6 +1,7 @@
 package com.github.lxyan2333.bedrockminer.client.config
 
 import com.github.lxyan2333.bedrockminer.client.area.AreaRestriction
+import com.github.lxyan2333.bedrockminer.client.automine.AutoMiner
 import com.github.lxyan2333.bedrockminer.client.breaking.BreakingFlowController
 import com.github.lxyan2333.bedrockminer.client.compat.BlocksCompat.isValidBlockName
 import com.github.lxyan2333.bedrockminer.client.compat.modmenu.GuiConfigs
@@ -15,8 +16,8 @@ import fi.dy.masa.malilib.config.IConfigBase
 import fi.dy.masa.malilib.config.IConfigHandler
 //? if >=1.21.11 {
 import fi.dy.masa.malilib.config.options.ConfigBlockState
-//?} else
-//import fi.dy.masa.malilib.config.options.ConfigString
+//?}
+import fi.dy.masa.malilib.config.options.ConfigString
 import fi.dy.masa.malilib.config.options.ConfigBoolean
 //? if >=1.18 {
 import fi.dy.masa.malilib.config.options.ConfigBooleanHotkeyed
@@ -142,6 +143,26 @@ object Configs : IConfigHandler, IKeybindProvider {
             StringUtils.translate("bedrockminer.config.wait_ticks.comment"),
         )
 
+        val TOOL_PROTECT: ConfigBoolean = ConfigBoolean(
+            "toolBreakProtection",
+            true,
+            StringUtils.translate("bedrockminer.config.tool_protect.comment"),
+        )
+
+        val AUTO_EAT: ConfigBoolean = ConfigBoolean(
+            "autoEat",
+            true,
+            StringUtils.translate("bedrockminer.config.auto_eat.comment"),
+        )
+
+        // Note: renamed key (was toolBreakProtectionThreshold) so stale saved
+        // values from old builds don't override the new 150 default.
+        val TOOL_PROTECT_THRESHOLD: ConfigInteger = ConfigInteger(
+            "toolProtectMinDurability",
+            150, 25, 600, true,
+            StringUtils.translate("bedrockminer.config.tool_protect_threshold.comment"),
+        )
+
         //? if >=1.21.11 {
         val SUPPORT_BLOCK: ConfigBlockState = ConfigBlockState(
             "supportBlock",
@@ -190,6 +211,9 @@ object Configs : IConfigHandler, IKeybindProvider {
             MAX_RETRIES,
             WAIT_TICKS,
             SUPPORT_BLOCK,
+            TOOL_PROTECT,
+            TOOL_PROTECT_THRESHOLD,
+            AUTO_EAT,
             REMOVE_GHOST_BLOCKS,
             SKIP_INSTANT_MINE_CHECK,
         )
@@ -359,6 +383,202 @@ object Configs : IConfigHandler, IKeybindProvider {
         )
     }
 
+    /**
+     * Auto mine: keep breaking the configured target blocks inside the box
+     * spanned by [POS1] and [POS2], without the player clicking on them.
+     * Only blocks the player can actually reach are targeted.
+     */
+    object AutoMine {
+        //? if >=1.18 {
+        val ENABLED: ConfigBooleanHotkeyed = ConfigBooleanHotkeyed(
+            "autoMineEnabled",
+            false,
+            "LEFT_ALT,B,A",
+            StringUtils.translate("bedrockminer.config.automine.enabled.comment"),
+        ).apply {
+            setValueChangeCallback { v -> AutoMiner.onToggled(v.booleanValue) }
+        }
+        //?} else {
+        /*val ENABLED: ConfigBoolean = ConfigBoolean(
+            "autoMineEnabled",
+            false,
+            StringUtils.translate("bedrockminer.config.automine.enabled.comment"),
+        ).apply {
+            setValueChangeCallback { v -> AutoMiner.onToggled(v.booleanValue) }
+        }
+
+        val ENABLE_HOTKEY: ConfigHotkey = ConfigHotkey(
+            "autoMineEnabledHotkey",
+            "LEFT_ALT,B,A",
+            StringUtils.translate("bedrockminer.config.automine.enabled.comment"),
+        ).apply {
+            keybind.setCallback { _, _ ->
+                ENABLED.booleanValue = !ENABLED.booleanValue
+                true
+            }
+        }
+        *///?}
+
+        val POS1: ConfigString = ConfigString(
+            "autoMinePos1",
+            "",
+            StringUtils.translate("bedrockminer.config.automine.pos1.comment"),
+        ).apply {
+            setValueChangeCallback { config -> validatePos(config) }
+        }
+
+        val POS2: ConfigString = ConfigString(
+            "autoMinePos2",
+            "",
+            StringUtils.translate("bedrockminer.config.automine.pos2.comment"),
+        ).apply {
+            setValueChangeCallback { config -> validatePos(config) }
+        }
+
+        val TARGET_BLOCKS: ConfigStringList = ConfigStringList(
+            "autoMineTargetBlocks",
+            ImmutableList.of("minecraft:bedrock"),
+            StringUtils.translate("bedrockminer.config.automine.target_blocks.comment"),
+        ).apply {
+            setValueChangeCallback { config ->
+                val invalid = config.strings.firstOrNull { if (it == "") false else !isValidBlockName(it) }
+                if (invalid != null) {
+                    Messager.actionBar(StringUtils.translate("bedrockminer.message.invalid_block_name", invalid))
+                    //? if >=1.21.11 {
+                    config.setStrings(config.lastStringListValue)
+                    //?} else
+                    //config.setStrings(config.defaultStrings)
+                }
+            }
+        }
+
+        /** Also pickaxe-mine every other breakable block inside the box. */
+        val CLEAR_ALL_BLOCKS: ConfigBoolean = ConfigBoolean(
+            "autoMineClearNonTargets",
+            true,
+            StringUtils.translate("bedrockminer.config.automine.clear_all_blocks.comment"),
+        )
+
+        val SKIP_BLOCKS_TOUCHING_PLAYER: ConfigBoolean = ConfigBoolean(
+            "autoMineSkipBlocksTouchingPlayer",
+            true,
+            StringUtils.translate("bedrockminer.config.automine.skip_blocks_touching_player.comment"),
+        )
+
+        val SCAN_INTERVAL: ConfigInteger = ConfigInteger(
+            "autoMineScanIntervalTicks",
+            10, 1, 200,
+            StringUtils.translate("bedrockminer.config.automine.scan_interval.comment"),
+        )
+
+        val MAX_CONCURRENT: ConfigInteger = ConfigInteger(
+            "autoMineMaxConcurrent",
+            1, 1, 20, true,
+            StringUtils.translate("bedrockminer.config.automine.max_concurrent.comment"),
+        )
+
+        val LAUNCH_DELAY: ConfigInteger = ConfigInteger(
+            "autoMineLaunchDelayTicks",
+            2, 0, 40, true,
+            StringUtils.translate("bedrockminer.config.automine.launch_delay.comment"),
+        )
+
+        //? if >=1.21 {
+        val MAX_RANGE: ConfigFloat = ConfigFloat(
+            "autoMineMaxRange",
+            3.5f, 1.0f, 4.5f, true,
+            StringUtils.translate("bedrockminer.config.automine.max_range.comment"),
+        )
+        //?} else {
+        /*val MAX_RANGE: ConfigDouble = ConfigDouble(
+            "autoMineMaxRange",
+            3.5, 1.0, 4.5, true,
+            StringUtils.translate("bedrockminer.config.automine.max_range.comment"),
+        )
+        *///?}
+
+        val maxRange: Double
+            get() {
+                //? if >=1.21 {
+                return MAX_RANGE.floatValue.toDouble()
+                //?} else
+                //return MAX_RANGE.doubleValue
+            }
+
+        val FAIL_COOLDOWN: ConfigInteger = ConfigInteger(
+            "autoMineFailCooldownTicks",
+            100, 1, 6000,
+            StringUtils.translate("bedrockminer.config.automine.fail_cooldown.comment"),
+        )
+
+        val SHOW_BOX: ConfigBoolean = ConfigBoolean(
+            "autoMineShowBox",
+            true,
+            StringUtils.translate("bedrockminer.config.automine.show_box.comment"),
+        )
+
+        val BOX_COLOR: ConfigColor = ConfigColor(
+            "autoMineBoxColor",
+            "#FFFF9A1F",
+            StringUtils.translate("bedrockminer.config.automine.box_color.comment"),
+        )
+
+        val BOX_FILL_COLOR: ConfigColor = ConfigColor(
+            "autoMineBoxFillColor",
+            "#30FF9A1F",
+            StringUtils.translate("bedrockminer.config.automine.box_fill_color.comment"),
+        )
+
+        //? if >=1.21 {
+        val OVERLAY_LINE_WIDTH: ConfigFloat = ConfigFloat(
+            "autoMineOverlayLineWidth",
+            6.0f, 2.0f, 12.0f, true,
+            StringUtils.translate("bedrockminer.config.automine.overlay_line_width.comment"),
+        )
+        //?} else {
+        /*val OVERLAY_LINE_WIDTH: ConfigDouble = ConfigDouble(
+            "autoMineOverlayLineWidth",
+            6.0, 2.0, 12.0, true,
+            StringUtils.translate("bedrockminer.config.automine.overlay_line_width.comment"),
+        )
+        *///?}
+
+        val overlayLineWidth: Float
+            get() {
+                //? if >=1.21 {
+                return OVERLAY_LINE_WIDTH.floatValue
+                //?} else
+                //return OVERLAY_LINE_WIDTH.doubleValue.toFloat()
+            }
+
+        val OPTIONS: List<IConfigBase> = listOf(
+            ENABLED,
+            //? if <1.18
+            //ENABLE_HOTKEY,
+            POS1,
+            POS2,
+            TARGET_BLOCKS,
+            CLEAR_ALL_BLOCKS,
+            SKIP_BLOCKS_TOUCHING_PLAYER,
+            MAX_RANGE,
+            SCAN_INTERVAL,
+            MAX_CONCURRENT,
+            LAUNCH_DELAY,
+            FAIL_COOLDOWN,
+            SHOW_BOX,
+            BOX_COLOR,
+            BOX_FILL_COLOR,
+            OVERLAY_LINE_WIDTH,
+        )
+
+        private fun validatePos(config: ConfigString) {
+            if (!AutoMiner.isValidPosString(config.stringValue)) {
+                Messager.actionBar(StringUtils.translate("bedrockminer.message.automine.invalid_pos", config.stringValue))
+                config.setValueFromString("")
+            }
+        }
+    }
+
     override fun load() {
         try {
             val element = GsonCompat.parseFile(configFile) ?: return
@@ -367,6 +587,7 @@ object Configs : IConfigHandler, IKeybindProvider {
                 ConfigUtils.readConfigBase(element.asJsonObject, "Client", Client.OPTIONS)
                 ConfigUtils.readConfigBase(element.asJsonObject, "Server", Server.OPTIONS)
                 ConfigUtils.readConfigBase(element.asJsonObject, "Area", Area.OPTIONS)
+                ConfigUtils.readConfigBase(element.asJsonObject, "AutoMine", AutoMine.OPTIONS)
             }
         } catch (_: Exception) {
         }
@@ -389,6 +610,7 @@ object Configs : IConfigHandler, IKeybindProvider {
             ConfigUtils.writeConfigBase(root, "Client", Client.OPTIONS)
             ConfigUtils.writeConfigBase(root, "Server", Server.OPTIONS)
             ConfigUtils.writeConfigBase(root, "Area", Area.OPTIONS)
+            ConfigUtils.writeConfigBase(root, "AutoMine", AutoMine.OPTIONS)
             //? if >=1.21.11 {
             JsonUtils.writeJsonToFile(root, configFile)
             //?} else if >=1.21 {
@@ -411,8 +633,11 @@ object Configs : IConfigHandler, IKeybindProvider {
             listOf(
                 //? if >=1.18 {
                 Generic.BEDROCK_MINER_ENABLED,
-                //?} else
-                //Generic.BEDROCK_MINER_ENABLE_HOTKEY,
+                AutoMine.ENABLED,
+                //?} else {
+                /*Generic.BEDROCK_MINER_ENABLE_HOTKEY,
+                AutoMine.ENABLE_HOTKEY,
+                *///?}
                 Generic.OPEN_CONFIG_GUI,
             )
         )
@@ -421,8 +646,11 @@ object Configs : IConfigHandler, IKeybindProvider {
     override fun addKeysToMap(manager: IKeybindManager?) {
         //? if >=1.18 {
         manager?.addKeybindToMap(Generic.BEDROCK_MINER_ENABLED.keybind)
-        //?} else
-        //manager?.addKeybindToMap(Generic.BEDROCK_MINER_ENABLE_HOTKEY.keybind)
+        manager?.addKeybindToMap(AutoMine.ENABLED.keybind)
+        //?} else {
+        /*manager?.addKeybindToMap(Generic.BEDROCK_MINER_ENABLE_HOTKEY.keybind)
+        manager?.addKeybindToMap(AutoMine.ENABLE_HOTKEY.keybind)
+        *///?}
         manager?.addKeybindToMap(Generic.OPEN_CONFIG_GUI.keybind)
     }
 

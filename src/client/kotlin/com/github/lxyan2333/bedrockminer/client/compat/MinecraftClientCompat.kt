@@ -1,6 +1,7 @@
 package com.github.lxyan2333.bedrockminer.client.compat
 
 import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.player.LocalPlayer
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
@@ -38,6 +39,13 @@ object MinecraftClientCompat {
         //?}
     }
 
+    fun currentScreen(): Screen? {
+        //? if >=26.2 {
+        return Minecraft.getInstance().gui.screen()
+        //?} else
+        //return Minecraft.getInstance().screen
+    }
+
     fun eyePosition(player: Player): Vec3 {
         //? if >=1.17
         return player.eyePosition
@@ -58,6 +66,14 @@ object MinecraftClientCompat {
         gameMode.handleContainerInput(containerId, slot, hotbarSlot, ContainerInput.SWAP, player)
         //?} else
         //gameMode.handleInventoryMouseClick(containerId, slot, hotbarSlot, ClickType.SWAP, player)
+    }
+
+    fun pickupClick(containerId: Int, slot: Int, button: Int, player: Player) {
+        val gameMode = Minecraft.getInstance().gameMode ?: return
+        //? if >=26.1 {
+        gameMode.handleContainerInput(containerId, slot, button, ContainerInput.PICKUP, player)
+        //?} else
+        //gameMode.handleInventoryMouseClick(containerId, slot, button, ClickType.PICKUP, player)
     }
 
     fun getSelectedItem(inventory: Inventory): ItemStack {

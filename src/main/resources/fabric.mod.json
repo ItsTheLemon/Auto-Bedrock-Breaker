@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "id": "bedrock-miner",
   "version": "${version}",
-  "name": "Bedrock-Miner",
-  "description": "Break bedrock and other blocks using piston retract mechanics",
+  "name": "Auto Bedrock Breaker",
+  "description": "Fully automated bedrock clearing. Fork of Fabric-Bedrock-Miner by LXYan2333 with pathfinding, auto item collection, tool protection, auto eat and a status HUD.",
   "authors": [
-    "LXYan2333"
+    "LXYan2333",
+    "ItsTheLemon"
   ],
   "contact": {
-    "homepage": "https://github.com/LXYan2333/Fabric-Bedrock-Miner",
-    "sources": "https://github.com/LXYan2333/Fabric-Bedrock-Miner"
+    "homepage": "https://github.com/ItsTheLemon/Auto-Bedrock-Breaker",
+    "sources": "https://github.com/ItsTheLemon/Auto-Bedrock-Breaker"
   },
   "license": "GPL-2.0-or-later",
   "icon": "assets/bedrock-miner/icon.png",

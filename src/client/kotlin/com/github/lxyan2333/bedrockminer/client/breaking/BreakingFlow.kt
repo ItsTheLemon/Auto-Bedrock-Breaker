@@ -12,6 +12,8 @@ import com.github.lxyan2333.bedrockminer.client.message.Messager
 import net.minecraft.world.level.block.piston.PistonBaseBlock
 import net.minecraft.world.level.block.state.BlockState
 import fi.dy.masa.malilib.util.StringUtils
+import net.minecraft.core.Direction
+import net.minecraft.world.InteractionHand
 import net.minecraft.world.item.Items
 
 class BreakingFlow(val targetPos: BlockPos, val targetBlockState: BlockState) {
@@ -30,6 +32,12 @@ class BreakingFlow(val targetPos: BlockPos, val targetBlockState: BlockState) {
         val level = Minecraft.getInstance().level ?: return
         if (level.getBlockState(targetPos) != targetBlockState) return
 
+        // Blocks outside the piston-break whitelist that are normally
+        // breakable are mined the regular way, with the best pickaxe.
+        if (!com.github.lxyan2333.bedrockminer.client.automine.AutoMiner.usesPistonMethod(level, targetPos, targetBlockState)) {
+            executeNormalMine(level)
+            return
+        }
 
         repeat(Configs.Generic.MAX_RETRIES.integerValue) {
 
@@ -102,6 +110,70 @@ class BreakingFlow(val targetPos: BlockPos, val targetBlockState: BlockState) {
         }
 
         Messager.actionBar(StringUtils.translate("bedrockminer.message.breaking_failed", targetBlockName))
+    }
+
+    /**
+     * Regular survival mining of a breakable block. The server tracks only
+     * ONE breaking progress per player, so this runs strictly exclusive —
+     * instant-break packets from concurrent piston flows would reset it.
+     */
+    private suspend fun executeNormalMine(level: Level) {
+        val gameMode = Minecraft.getInstance().gameMode ?: return
+        if (!MinecraftClientCompat.canInteractWithBlock(targetPos)) return
+        if (!InventoryManager.switchToItem(Items.DIAMOND_PICKAXE) || InventoryManager.isSelectedToolProtected()) {
+            Messager.actionBar(
+                StringUtils.translate(
+                    "bedrockminer.message.tools_worn",
+                    Configs.Generic.TOOL_PROTECT_THRESHOLD.integerValue,
+                )
+            )
+            return
+        }
+
+        val face = Direction.UP
+        BreakingFlowController.exclusiveMineActive = true
+        try {
+            BreakingFlowController.isInternalBreak = true
+            try {
+                gameMode.startDestroyBlock(targetPos, face)
+            } finally {
+                BreakingFlowController.isInternalBreak = false
+            }
+
+            var ticks = 0
+            while (level.getBlockState(targetPos) == targetBlockState && ticks < MAX_NORMAL_MINE_TICKS) {
+                // The pick may cross the protection threshold mid-hold.
+                if (ticks % 10 == 9 && InventoryManager.isSelectedToolProtected()) {
+                    gameMode.stopDestroyBlock()
+                    return
+                }
+                BreakingFlowController.isInternalBreak = true
+                try {
+                    gameMode.continueDestroyBlock(targetPos, face)
+                } finally {
+                    BreakingFlowController.isInternalBreak = false
+                }
+                //? if >=26.3 {
+                Minecraft.getInstance().player?.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false)
+                //?} else
+                //Minecraft.getInstance().player?.swing(InteractionHand.MAIN_HAND)
+                ClientTickScheduler.awaitTicks(1)
+                ticks++
+            }
+
+            if (level.getBlockState(targetPos) != targetBlockState) {
+                Messager.actionBar(StringUtils.translate("bedrockminer.message.block_broken", targetBlockName))
+            } else {
+                gameMode.stopDestroyBlock()
+                Messager.actionBar(StringUtils.translate("bedrockminer.message.breaking_failed", targetBlockName))
+            }
+        } finally {
+            BreakingFlowController.exclusiveMineActive = false
+        }
+    }
+
+    companion object {
+        private const val MAX_NORMAL_MINE_TICKS = 100
     }
 
     private suspend fun waitFor(maxTicks: Int, condition: () -> Boolean): Boolean {

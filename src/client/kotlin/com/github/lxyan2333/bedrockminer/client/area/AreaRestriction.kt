@@ -6,28 +6,21 @@ import net.minecraft.world.phys.Vec3
 
 object AreaRestriction {
     data class Area(val pos1: BlockPos, val pos2: BlockPos) {
-        fun contains(pos: BlockPos): Boolean {
-            val minX = minOf(pos1.x, pos2.x)
-            val minY = minOf(pos1.y, pos2.y)
-            val minZ = minOf(pos1.z, pos2.z)
-            val maxX = maxOf(pos1.x, pos2.x)
-            val maxY = maxOf(pos1.y, pos2.y)
-            val maxZ = maxOf(pos1.z, pos2.z)
+        val minX: Int get() = minOf(pos1.x, pos2.x)
+        val minY: Int get() = minOf(pos1.y, pos2.y)
+        val minZ: Int get() = minOf(pos1.z, pos2.z)
+        val maxX: Int get() = maxOf(pos1.x, pos2.x)
+        val maxY: Int get() = maxOf(pos1.y, pos2.y)
+        val maxZ: Int get() = maxOf(pos1.z, pos2.z)
 
+        fun contains(pos: BlockPos): Boolean {
             return pos.x in minX..maxX && pos.y in minY..maxY && pos.z in minZ..maxZ
         }
 
         fun distanceToSqr(pos: Vec3): Double {
-            val minX = minOf(pos1.x, pos2.x).toDouble()
-            val minY = minOf(pos1.y, pos2.y).toDouble()
-            val minZ = minOf(pos1.z, pos2.z).toDouble()
-            val maxX = maxOf(pos1.x, pos2.x).toDouble() + 1.0
-            val maxY = maxOf(pos1.y, pos2.y).toDouble() + 1.0
-            val maxZ = maxOf(pos1.z, pos2.z).toDouble() + 1.0
-
-            val dx = distanceToRange(pos.x, minX, maxX)
-            val dy = distanceToRange(pos.y, minY, maxY)
-            val dz = distanceToRange(pos.z, minZ, maxZ)
+            val dx = distanceToRange(pos.x, minX.toDouble(), maxX + 1.0)
+            val dy = distanceToRange(pos.y, minY.toDouble(), maxY + 1.0)
+            val dz = distanceToRange(pos.z, minZ.toDouble(), maxZ + 1.0)
 
             return dx * dx + dy * dy + dz * dz
         }

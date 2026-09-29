@@ -1,6 +1,8 @@
 package com.github.lxyan2333.bedrockminer.client.breaking
 
 import com.github.lxyan2333.bedrockminer.client.config.Configs
+import com.github.lxyan2333.bedrockminer.client.message.Messager
+import fi.dy.masa.malilib.util.StringUtils
 import kotlinx.coroutines.launch
 import net.minecraft.client.Minecraft
 //? if >=1.18 {
@@ -15,7 +17,17 @@ object BlockBreaker {
 
     suspend fun breakBlock(pos: BlockPos) {
         InteractionRangeChecker.checkRange(pos)
-        InventoryManager.switchToItem(Items.DIAMOND_PICKAXE)
+        // HARD guard: never swing a blacklisted (nearly broken) tool. If no
+        // healthy pickaxe could be selected, refuse the break entirely.
+        if (!InventoryManager.switchToItem(Items.DIAMOND_PICKAXE) || InventoryManager.isSelectedToolProtected()) {
+            Messager.actionBar(
+                StringUtils.translate(
+                    "bedrockminer.message.tools_worn",
+                    Configs.Generic.TOOL_PROTECT_THRESHOLD.integerValue,
+                )
+            )
+            return
+        }
         val gameMode = Minecraft.getInstance().gameMode ?: return
         BreakingFlowController.isInternalBreak = true
         try {
