@@ -271,7 +271,7 @@ object AreaRenderer : IRenderer {
         val player = client.player ?: return
         val cameraPos = RenderUtils.camPos()
         // Slider 2..12 maps to roughly 0.014..0.084 blocks of beam thickness.
-        val thick = Configs.AutoMine.overlayLineWidth * 0.007f
+        val thick = Configs.AutoMine.overlayLineWidth * 0.0055f
         val thin = thick * 0.55f
 
         val flowTargets = BreakingFlowController.activeFlows.toList().map { it.targetPos }
@@ -424,9 +424,9 @@ object AreaRenderer : IRenderer {
                 val center = Vec3(feet.x, feet.y + 0.045, feet.z)
 
                 // Faint shaded disc: the radar has a surface, not just edges.
-                disc(buffer, center, radius, 40, cameraPos, hueColor(hue, 0.07f))
+                disc(buffer, center, radius, 40, cameraPos, hueColor(hue, 0.04f))
                 // Slightly stronger band under the tick ring.
-                ring(buffer, center, radius * 0.86, radius, 40, cameraPos, hueColor(hue, 0.10f))
+                ring(buffer, center, radius * 0.86, radius, 40, cameraPos, hueColor(hue, 0.06f))
                 // Classic afterglow wedge trailing the sweep.
                 val sweepNow = (now % 2400L).toDouble() / 2400.0 * Math.PI * 2.0
                 val glowSteps = 12
@@ -450,8 +450,8 @@ object AreaRenderer : IRenderer {
                     hueColor((hue + 0.15f) % 1f, 0.35f), thin,
                 )
                 // Radial ticks.
-                for (i in 0 until 16) {
-                    val angle = i.toDouble() / 16.0 * Math.PI * 2.0
+                for (i in 0 until 8) {
+                    val angle = i.toDouble() / 8.0 * Math.PI * 2.0
                     val cos = kotlin.math.cos(angle)
                     val sin = kotlin.math.sin(angle)
                     beam(
@@ -472,24 +472,6 @@ object AreaRenderer : IRenderer {
                         Vec3(feet.x + radius * 0.75 * cos, feet.y + 0.06, feet.z + radius * 0.75 * sin),
                         Vec3(feet.x + radius * 1.08 * cos, feet.y + 0.06, feet.z + radius * 1.08 * sin),
                         cameraPos, color, thick,
-                    )
-                }
-                // Scan grid.
-                val gridColor = hueColor((hue + 0.3f) % 1f, 0.14f)
-                val gridMax = kotlin.math.floor(radius).toInt()
-                for (g in -gridMax..gridMax) {
-                    val half = kotlin.math.sqrt(radius * radius - g * g.toDouble())
-                    beam(
-                        buffer,
-                        Vec3(feet.x + g, feet.y + 0.03, feet.z - half),
-                        Vec3(feet.x + g, feet.y + 0.03, feet.z + half),
-                        cameraPos, gridColor, thin * 0.6f,
-                    )
-                    beam(
-                        buffer,
-                        Vec3(feet.x - half, feet.y + 0.03, feet.z + g),
-                        Vec3(feet.x + half, feet.y + 0.03, feet.z + g),
-                        cameraPos, gridColor, thin * 0.6f,
                     )
                 }
                 // Rotating sweep with trails.
@@ -549,7 +531,7 @@ object AreaRenderer : IRenderer {
                         AutoPilot.phase == AutoPilot.Phase.MINING || item != null -> COLOR_WALK_COLLECT
                     else -> COLOR_WALK_RELOCATE
                 }
-                beam(buffer, bodyPos, walkTarget.add(0.0, 0.3, 0.0), cameraPos, color, thick)
+                beam(buffer, bodyPos, walkTarget.add(0.0, 0.3, 0.0), cameraPos, color, thin)
                 val route = PlayerMover.currentPath
                 if (route.isNotEmpty()) {
                     val time = (now % 900L).toFloat() / 900f
@@ -564,20 +546,40 @@ object AreaRenderer : IRenderer {
                         }
                         val marching = kotlin.math.sin(index * 0.45 - time * Math.PI * 2.0).toFloat()
                         val alpha = 0.55f + 0.45f * ((marching + 1f) / 2f)
-                        beam(buffer, previous, next, cameraPos, base.withAlpha(alpha), thick)
-                        // Shade the surface tile it plans to step on: bright
-                        // for the next step, fading along the route, breathing
-                        // with the marching pulse.
-                        val tileAlpha = ((if (index == 0) 0.42f else 0.30f - index * 0.007f).coerceAtLeast(0.10f)) *
-                            (0.75f + 0.25f * ((marching + 1f) / 2f))
+                        beam(buffer, previous, next, cameraPos, base.withAlpha(alpha), thin)
+                        // Step tiles: strongly shaded surface on every block it
+                        // plans to walk over, framed, brightest for the next
+                        // step, breathing with the marching pulse.
+                        val tileAlpha = ((if (index == 0) 0.65f else 0.45f - index * 0.010f).coerceAtLeast(0.18f)) *
+                            (0.8f + 0.2f * ((marching + 1f) / 2f))
                         quad(
                             buffer,
-                            Vec3(waypoint.x + 0.06, waypoint.y + 0.02, waypoint.z + 0.06),
-                            Vec3(waypoint.x + 0.94, waypoint.y + 0.02, waypoint.z + 0.06),
-                            Vec3(waypoint.x + 0.94, waypoint.y + 0.02, waypoint.z + 0.94),
-                            Vec3(waypoint.x + 0.06, waypoint.y + 0.02, waypoint.z + 0.94),
+                            Vec3(waypoint.x + 0.08, waypoint.y + 0.03, waypoint.z + 0.08),
+                            Vec3(waypoint.x + 0.92, waypoint.y + 0.03, waypoint.z + 0.08),
+                            Vec3(waypoint.x + 0.92, waypoint.y + 0.03, waypoint.z + 0.92),
+                            Vec3(waypoint.x + 0.08, waypoint.y + 0.03, waypoint.z + 0.92),
                             cameraPos, base.withAlpha(tileAlpha),
                         )
+                        // Tile frame.
+                        val f = tileAlpha + 0.25f
+                        beam(buffer, Vec3(waypoint.x + 0.08, waypoint.y + 0.035, waypoint.z + 0.08), Vec3(waypoint.x + 0.92, waypoint.y + 0.035, waypoint.z + 0.08), cameraPos, base.withAlpha(f), thin * 0.5f)
+                        beam(buffer, Vec3(waypoint.x + 0.92, waypoint.y + 0.035, waypoint.z + 0.08), Vec3(waypoint.x + 0.92, waypoint.y + 0.035, waypoint.z + 0.92), cameraPos, base.withAlpha(f), thin * 0.5f)
+                        beam(buffer, Vec3(waypoint.x + 0.92, waypoint.y + 0.035, waypoint.z + 0.92), Vec3(waypoint.x + 0.08, waypoint.y + 0.035, waypoint.z + 0.92), cameraPos, base.withAlpha(f), thin * 0.5f)
+                        beam(buffer, Vec3(waypoint.x + 0.08, waypoint.y + 0.035, waypoint.z + 0.92), Vec3(waypoint.x + 0.08, waypoint.y + 0.035, waypoint.z + 0.08), cameraPos, base.withAlpha(f), thin * 0.5f)
+                        // Direction arrowhead every second segment.
+                        if (index % 2 == 0) {
+                            val seg = next.subtract(previous)
+                            val segH = Vec3(seg.x, 0.0, seg.z)
+                            if (segH.lengthSqr() > 1.0e-4) {
+                                val dir = segH.normalize()
+                                val mid = previous.add(seg.scale(0.55)).add(0.0, 0.04, 0.0)
+                                val left = Vec3(-dir.z, 0.0, dir.x)
+                                val backLeft = mid.subtract(dir.scale(0.30)).add(left.scale(0.20))
+                                val backRight = mid.subtract(dir.scale(0.30)).subtract(left.scale(0.20))
+                                beam(buffer, backLeft, mid, cameraPos, base.withAlpha(0.95f), thin * 0.7f)
+                                beam(buffer, backRight, mid, cameraPos, base.withAlpha(0.95f), thin * 0.7f)
+                            }
+                        }
                         beamBox(
                             buffer,
                             next.x - 0.09, next.y - 0.09, next.z - 0.09,
@@ -593,6 +595,14 @@ object AreaRenderer : IRenderer {
                     walkTarget.x - 0.18, walkTarget.y + 0.02, walkTarget.z - 0.18,
                     walkTarget.x + 0.18, walkTarget.y + 0.14, walkTarget.z + 0.18,
                     cameraPos, color, thin,
+                )
+                // Pulsing landing ring at the walking goal.
+                val goalFraction = ((now % 1000L).toDouble() / 1000.0)
+                beamCircle(
+                    buffer,
+                    Vec3(walkTarget.x, walkTarget.y + 0.03, walkTarget.z),
+                    0.25 + goalFraction * 0.45, 16, cameraPos,
+                    color.withAlpha(((1.0 - goalFraction) * 0.9).toFloat()), thin * 0.6f,
                 )
             }
 
