@@ -270,8 +270,8 @@ object AreaRenderer : IRenderer {
         val level = client.level ?: return
         val player = client.player ?: return
         val cameraPos = RenderUtils.camPos()
-        // Slider 2..12 maps to roughly 0.014..0.084 blocks of beam thickness.
-        val thick = Configs.AutoMine.overlayLineWidth * 0.0055f
+        // Slider 1..10 maps to 0.004..0.04 blocks: thin even at maximum.
+        val thick = Configs.AutoMine.overlayLineWidth * 0.004f
         val thin = thick * 0.55f
 
         val flowTargets = BreakingFlowController.activeFlows.toList().map { it.targetPos }

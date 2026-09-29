@@ -531,14 +531,14 @@ object Configs : IConfigHandler, IKeybindProvider {
 
         //? if >=1.21 {
         val OVERLAY_LINE_WIDTH: ConfigFloat = ConfigFloat(
-            "autoMineOverlayLineWidth",
-            6.0f, 2.0f, 12.0f, true,
+            "overlayBeamWidth",
+            3.0f, 1.0f, 10.0f, true,
             StringUtils.translate("bedrockminer.config.automine.overlay_line_width.comment"),
         )
         //?} else {
         /*val OVERLAY_LINE_WIDTH: ConfigDouble = ConfigDouble(
-            "autoMineOverlayLineWidth",
-            6.0, 2.0, 12.0, true,
+            "overlayBeamWidth",
+            3.0, 1.0, 10.0, true,
             StringUtils.translate("bedrockminer.config.automine.overlay_line_width.comment"),
         )
         *///?}
