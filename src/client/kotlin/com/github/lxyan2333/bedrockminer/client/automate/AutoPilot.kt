@@ -794,7 +794,10 @@ object AutoPilot {
             return
         }
 
-        PlayerMover.setTarget(Vec3(center.x, center.y, center.z), arriveDistance)
+        // Press INTO comfortable range rather than stopping on its rim: the
+        // eye-distance accept above fires mid-walk the moment reach is real,
+        // so the walk ends closer and never stalls at the boundary.
+        PlayerMover.setTarget(Vec3(center.x, center.y, center.z), maxOf(0.9, arriveDistance - 0.8))
         when (PlayerMover.tick(level, player)) {
             PlayerMover.Result.STUCK -> {
                 unreachable[target] = tick + UNREACHABLE_RETRY_TICKS

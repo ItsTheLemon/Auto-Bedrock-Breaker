@@ -14,12 +14,14 @@ import kotlin.math.sqrt
 /**
  * Walks the player along [PathFinder] routes, one waypoint at a time.
  *
- * The path already encodes what is physically possible (steps, drops, no
- * corner cutting), so steering is trivial: head for the next waypoint's
- * center, jump only when the waypoint is one block up, fall when it is
- * below. Plans are refreshed when the world changes under them, and a
- * no-progress watchdog still reports [Result.STUCK] so the caller can pick
- * a different goal instead of pushing forever.
+ * Movement never waits for planning. Every tick the player walks toward the
+ * next route cell — or, when no route exists, straight toward the goal, the
+ * way a player closes on anything they can see. Planning only refines the
+ * route around obstacles: a healthy plan is never second-guessed, a failed
+ * plan never stops the legs, and the last stretch to any goal is always
+ * walked directly with no plan at all. A progress watchdog reports
+ * [Result.STUCK] so the caller picks a different goal instead of pushing
+ * forever.
  */
 object PlayerMover {
     /** Blocks per tick; vanilla walking is ~0.216, stay just below it. */
@@ -28,11 +30,13 @@ object PlayerMover {
     private const val NO_PROGRESS_TICKS = 40
     private const val PROGRESS_EPSILON = 0.02
     private const val JUMP_COOLDOWN_TICKS = 4
-    /** Re-plan at least this often, in case the terrain changed. */
+    /** Healthy plans are left alone at least this long. */
     private const val REPLAN_INTERVAL = 60
+    /** After a failed or partial plan, walk greedily this long before planning again. */
+    private const val REPLAN_RETRY = 20
+    /** Within this range and planless, walk straight at the goal — no planning at all. */
+    private const val GLIDE_RANGE = 4.0
     private const val WAYPOINT_REACH = 0.7
-    /** Max body/head turn per tick — smooth, human-looking rotation. */
-    private const val TURN_RATE = 14.0f
 
     enum class Result { IDLE, MOVING, ARRIVED, STUCK }
 
@@ -47,7 +51,6 @@ object PlayerMover {
 
     private val path = ArrayList<BlockPos>()
     private var replanCooldown = 0
-    private var failedPlans = 0
 
     /** The point currently walked to, for the action overlay. */
     val currentTarget: Vec3?
@@ -64,7 +67,6 @@ object PlayerMover {
             noProgressTicks = 0
             path.clear()
             replanCooldown = 0
-            failedPlans = 0
         }
         target = pos
         acceptRadius = radius
@@ -79,104 +81,68 @@ object PlayerMover {
 
     fun tick(level: Level, player: LocalPlayer): Result {
         tickCounter++
-        val t = target ?: return Result.IDLE
+        val goal = target ?: return Result.IDLE
         val feet = player.position()
-        val dx = t.x - feet.x
-        val dz = t.z - feet.z
+        val dx = goal.x - feet.x
+        val dz = goal.z - feet.z
         val horizontal = sqrt(dx * dx + dz * dz)
 
-        if (horizontal <= acceptRadius && abs(t.y - feet.y) <= verticalTolerance) {
+        if (horizontal <= acceptRadius && abs(goal.y - feet.y) <= verticalTolerance) {
             player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
             return Result.ARRIVED
         }
 
         replanCooldown--
-        // A healthy route is NEVER re-planned: commit and go. Re-route only
-        // when there is no plan, the next step got blocked by world changes,
-        // or progress has genuinely stalled for a while.
-        if (path.isEmpty() || !nextWaypointValid(level) ||
-            (replanCooldown <= 0 && noProgressTicks > 10)
-        ) {
-            replan(level, player, t)
-            if (path.isEmpty()) {
-                // No route at all: stand still and fail fast via the watchdog.
-                player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
-                failedPlans++
-                if (failedPlans >= 3) {
-                    clear()
-                    return Result.STUCK
-                }
-                noProgressTicks += 10
-                return Result.MOVING
-            }
-            failedPlans = 0
+        dropPassedWaypoints(feet)
+
+        // Plan ONLY when something is genuinely wrong: the next step got
+        // blocked by world changes, progress has truly stalled, or the goal
+        // is too far to walk at blindly with no route. A healthy plan is
+        // never second-guessed, and planning never stops the walking below.
+        val planBroken = path.isNotEmpty() && !nextWaypointValid(level)
+        val stalled = noProgressTicks >= 10 && replanCooldown <= 0
+        val farWithoutPlan = path.isEmpty() && horizontal > GLIDE_RANGE && replanCooldown <= 0
+        if (planBroken || stalled || farWithoutPlan) {
+            replan(level, player, goal)
+            dropPassedWaypoints(feet)
         }
 
-        // Advance past waypoints we are standing on — and past any waypoint
-        // we overshot: if the one after it is already closer, never turn back.
-        while (path.isNotEmpty() && reachedWaypoint(feet, path[0])) {
-            path.removeAt(0)
-        }
-        while (path.size >= 2) {
-            // Drop a corner ONLY when the player has moved past its plane
-            // along the outgoing segment. Distance comparisons are wrong on
-            // switchback routes and would cut corners through obstacles.
-            val p0 = path[0]
-            val p1 = path[1]
-            val segX = (p1.x - p0.x).toDouble()
-            val segZ = (p1.z - p0.z).toDouble()
-            val relX = feet.x - (p0.x + 0.5)
-            val relZ = feet.z - (p0.z + 0.5)
-            if (relX * segX + relZ * segZ > 0.0 && abs(p0.y - feet.y) <= 1.2) {
-                path.removeAt(0)
-            } else {
-                break
-            }
-        }
-        var waypoint = path.firstOrNull()
-        if (waypoint == null) {
-            // Route exhausted with the goal a step away: glide straight at
-            // it. Never stop, never re-plan for the last meter.
-            waypoint = BlockPos.containing(t.x, t.y, t.z)
-        }
+        // Steer at the next route cell — or straight at the goal when no
+        // route exists. The last meter is ALWAYS walked directly: no plan,
+        // no pause, exactly like a player closing on something they see.
+        val cell = path.firstOrNull()
+        val waypointX = if (cell != null) cell.x + 0.5 else goal.x
+        val waypointY = if (cell != null) cell.y.toDouble() else goal.y
+        val waypointZ = if (cell != null) cell.z + 0.5 else goal.z
 
-        // Progress = remaining distance ALONG the route. A curve around an
-        // obstacle still counts as progress; only true wedging trips this.
-        run {
-            var remaining = sqrt(
-                (waypoint.x + 0.5 - feet.x).let { it * it } +
-                    (waypoint.z + 0.5 - feet.z).let { it * it },
-            )
-            for (i in 0 until path.size - 1) {
-                val a = path[i]
-                val b = path[i + 1]
-                val sx = (b.x - a.x).toDouble()
-                val sz = (b.z - a.z).toDouble()
-                remaining += sqrt(sx * sx + sz * sz)
-            }
-            if (remaining < lastRemaining - PROGRESS_EPSILON) {
-                noProgressTicks = 0
-            } else {
-                noProgressTicks++
-                if (noProgressTicks == NO_PROGRESS_TICKS / 2) {
-                    // Halfway to giving up: route fresh from the wedge spot.
-                    // The counter is NOT reset: a replan can never grant
-                    // fake progress, so real wedging always reaches the exit.
-                    path.clear()
-                    replanCooldown = 0
-                    lastRemaining = remaining
-                    return Result.MOVING
-                }
-                if (noProgressTicks > NO_PROGRESS_TICKS) {
-                    clear()
-                    return Result.STUCK
-                }
-            }
-            lastRemaining = remaining
+        // Progress = remaining distance along the route (straight-line while
+        // gliding). A curve around an obstacle still counts as progress;
+        // only true wedging trips the watchdog.
+        var remaining = run {
+            val rx = waypointX - feet.x
+            val rz = waypointZ - feet.z
+            sqrt(rx * rx + rz * rz)
         }
+        for (i in 0 until path.size - 1) {
+            val a = path[i]
+            val b = path[i + 1]
+            val sx = (b.x - a.x).toDouble()
+            val sz = (b.z - a.z).toDouble()
+            remaining += sqrt(sx * sx + sz * sz)
+        }
+        if (remaining < lastRemaining - PROGRESS_EPSILON) {
+            noProgressTicks = 0
+        } else {
+            noProgressTicks++
+            if (noProgressTicks > NO_PROGRESS_TICKS) {
+                clear()
+                return Result.STUCK
+            }
+        }
+        lastRemaining = remaining
 
-        val wx = waypoint.x + 0.5 - feet.x
-        val wz = waypoint.z + 0.5 - feet.z
+        val wx = waypointX - feet.x
+        val wz = waypointZ - feet.z
         val wHorizontal = sqrt(wx * wx + wz * wz)
         if (wHorizontal > 1.0e-3) {
             var dirX = wx / wHorizontal
@@ -197,18 +163,21 @@ object PlayerMover {
             // Human-looking head motion: ease toward the walking direction
             // with a slow wander, and gaze at a point well ahead near eye
             // level instead of staring at the ground. Cosmetic only.
-            val t = tickCounter.toDouble()
-            val wanderYaw = (sin(t * 0.11) * 5.0 + sin(t * 0.031) * 3.5).toFloat()
+            val wander = tickCounter.toDouble()
+            val wanderYaw = (sin(wander * 0.11) * 5.0 + sin(wander * 0.031) * 3.5).toFloat()
             val targetYaw = Math.toDegrees(atan2(-dirX, dirZ)).toFloat() + wanderYaw
             val yawDelta = Mth.wrapDegrees(targetYaw - player.yRot)
             player.yRot = player.yRot + (yawDelta * 0.15f).coerceIn(-8f, 8f)
 
-            val gaze = path.getOrNull(minOf(3, path.size - 1)) ?: waypoint
-            val gazeDx = gaze.x + 0.5 - feet.x
-            val gazeDz = gaze.z + 0.5 - feet.z
+            val gazeCell = path.getOrNull(minOf(3, path.size - 1))
+            val gazeX = if (gazeCell != null) gazeCell.x + 0.5 else waypointX
+            val gazeY = (if (gazeCell != null) gazeCell.y.toDouble() else waypointY) + 1.4
+            val gazeZ = if (gazeCell != null) gazeCell.z + 0.5 else waypointZ
+            val gazeDx = gazeX - feet.x
+            val gazeDz = gazeZ - feet.z
             val gazeDist = maxOf(2.0, sqrt(gazeDx * gazeDx + gazeDz * gazeDz))
-            val gazeDy = (gaze.y + 1.4) - (feet.y + 1.62)
-            val wanderPitch = (sin(t * 0.17) * 2.0).toFloat()
+            val gazeDy = gazeY - (feet.y + 1.62)
+            val wanderPitch = (sin(wander * 0.17) * 2.0).toFloat()
             val targetPitch = Math.toDegrees(atan2(-gazeDy, gazeDist)).toFloat()
                 .coerceIn(-18f, 22f) + wanderPitch
             player.xRot = player.xRot + ((targetPitch - player.xRot) * 0.10f).coerceIn(-4f, 4f)
@@ -216,8 +185,8 @@ object PlayerMover {
 
         // Jump when the route says "one up", or when we are pressed against
         // a step while the route does not lead downward.
-        if ((waypoint.y > feet.y + 0.5 ||
-                (player.horizontalCollision && waypoint.y >= feet.y - 0.4)) &&
+        if ((waypointY > feet.y + 0.5 ||
+                (player.horizontalCollision && waypointY >= feet.y - 0.4)) &&
             MinecraftClientCompat.isOnGround(player) &&
             tickCounter - lastJumpTick >= JUMP_COOLDOWN_TICKS
         ) {
@@ -228,10 +197,36 @@ object PlayerMover {
         return Result.MOVING
     }
 
+    private fun dropPassedWaypoints(feet: Vec3) {
+        // Advance past waypoints we are standing on — and past any corner
+        // whose plane we already crossed: if the route continues beyond it,
+        // never turn back.
+        while (path.isNotEmpty() && reachedWaypoint(feet, path[0])) {
+            path.removeAt(0)
+        }
+        while (path.size >= 2) {
+            // Drop a corner ONLY when the player has moved past its plane
+            // along the outgoing segment. Distance comparisons are wrong on
+            // switchback routes and would cut corners through obstacles.
+            val p0 = path[0]
+            val p1 = path[1]
+            val segX = (p1.x - p0.x).toDouble()
+            val segZ = (p1.z - p0.z).toDouble()
+            val relX = feet.x - (p0.x + 0.5)
+            val relZ = feet.z - (p0.z + 0.5)
+            if (relX * segX + relZ * segZ > 0.0 && abs(p0.y - feet.y) <= 1.2) {
+                path.removeAt(0)
+            } else {
+                break
+            }
+        }
+    }
+
     private fun replan(level: Level, player: LocalPlayer, goal: Vec3) {
         path.clear()
         // Straight line first: on open ground this is the whole plan,
-        // computed instantly. Search only when the direct walk fails.
+        // computed instantly. An empty result means "close enough to walk
+        // straight" — the glide covers it with no route at all.
         val direct = PathFinder.directWalk(
             level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance,
         )
@@ -244,8 +239,9 @@ object PlayerMover {
         if (result != null) {
             path.addAll(result.waypoints)
         }
-        // Partial routes end early on purpose; re-plan sooner in that case.
-        replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else 25
+        // Partial routes end early on purpose, and after a failed plan the
+        // glide keeps walking toward the goal: retry sooner in both cases.
+        replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else REPLAN_RETRY
     }
 
     private fun nextWaypointValid(level: Level): Boolean {

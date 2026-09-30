@@ -110,7 +110,8 @@ object PathFinder {
         val dz = goal.z - sz
         val distance = sqrt(dx * dx + dz * dz)
         if (distance > 24.0) return null
-        if (distance < 0.2) return emptyList()
+        // Inside glide range the mover walks straight with no route at all.
+        if (distance < 0.9) return emptyList()
 
         val steps = maxOf(1, kotlin.math.ceil(distance / 0.35).toInt())
         val cells = ArrayList<BlockPos>()
@@ -159,7 +160,9 @@ object PathFinder {
             last = cell
             cells.add(cell)
         }
-        if (!isGoal(last, goal, acceptRadius, verticalTolerance)) return null
+        // The line only needs to end NEAR the goal — the mover glides the
+        // final stretch directly, so give the end check generous slack.
+        if (!isGoal(last, goal, acceptRadius + 0.35, verticalTolerance)) return null
         return simplify(cells)
     }
 
