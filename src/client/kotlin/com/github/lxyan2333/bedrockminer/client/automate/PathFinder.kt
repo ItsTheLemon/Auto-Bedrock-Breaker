@@ -16,8 +16,8 @@ import kotlin.math.sqrt
  * never proposes impossible jumps or paths through blocks.
  */
 object PathFinder {
-    private const val MAX_NODES = 3000
-    private const val HORIZONTAL_LIMIT = 28
+    private const val MAX_NODES = 1200
+    private const val HORIZONTAL_LIMIT = 20
     private const val UP_LIMIT = 8
     private const val DOWN_LIMIT = 10
 
@@ -87,6 +87,80 @@ object PathFinder {
             return Path(reconstruct(cameFrom, best), false)
         }
         return null
+    }
+
+    /**
+     * Instant straight-line plan: samples the direct line to the goal and
+     * follows the terrain (steps up one, drops safely). On open ground this
+     * replaces the whole search with a microsecond check, so the mover just
+     * GOES. Returns null only when the straight walk genuinely does not work.
+     */
+    fun directWalk(
+        level: Level,
+        start: BlockPos,
+        goal: Vec3,
+        acceptRadius: Double,
+        maxDrop: Int,
+        verticalTolerance: Double,
+    ): List<BlockPos>? {
+        val origin = resolveStart(level, start)
+        val sx = origin.x + 0.5
+        val sz = origin.z + 0.5
+        val dx = goal.x - sx
+        val dz = goal.z - sz
+        val distance = sqrt(dx * dx + dz * dz)
+        if (distance > 24.0) return null
+        if (distance < 0.2) return emptyList()
+
+        val steps = maxOf(1, kotlin.math.ceil(distance / 0.35).toInt())
+        val cells = ArrayList<BlockPos>()
+        var last = origin
+        var curY = origin.y
+        for (i in 1..steps) {
+            val px = sx + dx * i / steps
+            val pz = sz + dz * i / steps
+            val cx = kotlin.math.floor(px).toInt()
+            val cz = kotlin.math.floor(pz).toInt()
+            if (cx == last.x && cz == last.z) continue
+            // Diagonal cell change: both cardinal corners must be open.
+            if (cx != last.x && cz != last.z) {
+                val cornerA = BlockPos(cx, curY, last.z)
+                val cornerB = BlockPos(last.x, curY, cz)
+                if (!PlayerMover.isPassable(level, cornerA) || !PlayerMover.isPassable(level, cornerA.above())) return null
+                if (!PlayerMover.isPassable(level, cornerB) || !PlayerMover.isPassable(level, cornerB.above())) return null
+            }
+            var cell = BlockPos(cx, curY, cz)
+            if (!isStandable(level, cell)) {
+                val up = cell.above()
+                if (isStandable(level, up) && PlayerMover.isPassable(level, BlockPos(last.x, curY + 2, last.z))) {
+                    cell = up
+                } else {
+                    // Not a step: must be an open column we can drop through.
+                    if (!PlayerMover.isPassable(level, cell) || !PlayerMover.isPassable(level, cell.above())) return null
+                    var probe = cell
+                    var depth = 0
+                    var landing: BlockPos? = null
+                    while (depth < maxDrop) {
+                        val below = probe.below()
+                        if (!PlayerMover.isPassable(level, below)) {
+                            landing = probe
+                            break
+                        }
+                        probe = below
+                        depth++
+                        if (!PlayerMover.isPassable(level, probe.above())) return null
+                    }
+                    if (landing == null) return null
+                    if (depth >= 2 && isTrapCell(level, landing)) return null
+                    cell = landing
+                }
+            }
+            curY = cell.y
+            last = cell
+            cells.add(cell)
+        }
+        if (!isGoal(last, goal, acceptRadius, verticalTolerance)) return null
+        return simplify(cells)
     }
 
     /** Whether a full route to the goal exists (used to pre-validate item trips). */

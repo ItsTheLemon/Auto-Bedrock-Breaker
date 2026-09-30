@@ -133,13 +133,11 @@ object PlayerMover {
                 break
             }
         }
-        val waypoint = path.firstOrNull()
+        var waypoint = path.firstOrNull()
         if (waypoint == null) {
-            // Route exhausted but the target check above did not accept —
-            // force a fresh plan next tick.
-            replanCooldown = 0
-            player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
-            return Result.MOVING
+            // Route exhausted with the goal a step away: glide straight at
+            // it. Never stop, never re-plan for the last meter.
+            waypoint = BlockPos.containing(t.x, t.y, t.z)
         }
 
         // Progress = remaining distance ALONG the route. A curve around an
@@ -232,6 +230,16 @@ object PlayerMover {
 
     private fun replan(level: Level, player: LocalPlayer, goal: Vec3) {
         path.clear()
+        // Straight line first: on open ground this is the whole plan,
+        // computed instantly. Search only when the direct walk fails.
+        val direct = PathFinder.directWalk(
+            level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance,
+        )
+        if (direct != null) {
+            path.addAll(direct)
+            replanCooldown = REPLAN_INTERVAL
+            return
+        }
         val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance = verticalTolerance)
         if (result != null) {
             path.addAll(result.waypoints)
