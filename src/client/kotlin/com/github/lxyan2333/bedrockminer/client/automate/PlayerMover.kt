@@ -184,9 +184,20 @@ object PlayerMover {
         }
 
         // Jump when the route says "one up", or when we are pressed against
-        // a step while the route does not lead downward.
-        if ((waypointY > feet.y + 0.5 ||
-                (player.horizontalCollision && waypointY >= feet.y - 0.4)) &&
+        // a step while the route does not lead downward — but ONLY if the
+        // step ahead is genuinely jumpable: exactly one block up with open
+        // headroom. A player cannot jump a 2-high wall, ever; spamming jumps
+        // at one just burns time until the watchdog routes around it.
+        val rise = waypointY - feet.y
+        val stepJumpable = rise < 1.3 && wHorizontal > 1.0e-3 && run {
+            val aheadX = Mth.floor(feet.x + wx / wHorizontal * 0.8)
+            val aheadY = Mth.floor(feet.y + 0.001)
+            val aheadZ = Mth.floor(feet.z + wz / wHorizontal * 0.8)
+            isPassable(level, BlockPos(aheadX, aheadY + 1, aheadZ)) &&
+                isPassable(level, BlockPos(aheadX, aheadY + 2, aheadZ))
+        }
+        if ((rise > 0.5 || (player.horizontalCollision && rise >= -0.4)) &&
+            stepJumpable &&
             MinecraftClientCompat.isOnGround(player) &&
             tickCounter - lastJumpTick >= JUMP_COOLDOWN_TICKS
         ) {
