@@ -86,7 +86,14 @@ object AutoPilot {
     private const val UNREACHABLE_RETRY_TICKS = 2400L
     /** Tiny: arrival must never be stricter than what the miner can reach. */
     private const val ARRIVE_RANGE_MARGIN = 0.05
-    private const val RELOCATE_STALL_TICKS = 25
+    private const val RELOCATE_STALL_TICKS = 8
+    /**
+     * Preferred eye distance to the target block when walking up to it.
+     * Standing here keeps the whole piston contraption comfortably inside
+     * reach with margin to spare, so failed pistons retry reliably instead
+     * of flickering at the rim of the reach sphere.
+     */
+    private const val COMFORT_EYE_DISTANCE = 2.4
 
     /** How often (ticks) the remaining-blocks count for the HUD refreshes. */
     private const val REMAINING_COUNT_INTERVAL = 100
@@ -780,7 +787,13 @@ object AutoPilot {
         }
 
         val center = MinecraftClientCompat.blockCenter(target)
-        val arriveDistance = maxOf(1.0, Configs.AutoMine.maxRange - ARRIVE_RANGE_MARGIN)
+        // Walk up CLOSE, not merely into reach: stopping the moment the
+        // block crosses the reach sphere leaves every placement at max
+        // range, where pistons fail and retry forever.
+        val arriveDistance = maxOf(
+            1.0,
+            minOf(Configs.AutoMine.maxRange - ARRIVE_RANGE_MARGIN, COMFORT_EYE_DISTANCE),
+        )
         val eye = MinecraftClientCompat.eyePosition(player)
         if (eye.distanceTo(center) <= arriveDistance) {
             PlayerMover.clear()
@@ -795,9 +808,17 @@ object AutoPilot {
         }
 
         // Press INTO comfortable range rather than stopping on its rim: the
-        // eye-distance accept above fires mid-walk the moment reach is real,
-        // so the walk ends closer and never stalls at the boundary.
-        PlayerMover.setTarget(Vec3(center.x, center.y, center.z), maxOf(0.9, arriveDistance - 0.8))
+        // eye-distance accept above fires mid-walk the moment we are truly
+        // close, so the walk ends deep in range and never stalls at the
+        // boundary. A per-target sideways offset varies the approach angle,
+        // so a piston angle that failed once is retried from a fresh spot.
+        val angleSeed = kotlin.random.Random(target.hashCode() * 31 + (tick / 600).toInt())
+        val offsetX = (angleSeed.nextDouble() - 0.5) * 1.6
+        val offsetZ = (angleSeed.nextDouble() - 0.5) * 1.6
+        PlayerMover.setTarget(
+            Vec3(center.x + offsetX, center.y, center.z + offsetZ),
+            maxOf(0.9, arriveDistance - 0.8),
+        )
         when (PlayerMover.tick(level, player)) {
             PlayerMover.Result.STUCK -> {
                 unreachable[target] = tick + UNREACHABLE_RETRY_TICKS
