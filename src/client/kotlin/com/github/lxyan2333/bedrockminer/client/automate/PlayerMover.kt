@@ -40,7 +40,7 @@ object PlayerMover {
     private var acceptRadius = 1.0
     private var maxDrop = 3
     private var verticalTolerance = 3.0
-    private var bestRemaining = Double.MAX_VALUE
+    private var lastRemaining = Double.MAX_VALUE
     private var noProgressTicks = 0
     private var tickCounter = 0L
     private var lastJumpTick = -100L
@@ -60,7 +60,7 @@ object PlayerMover {
     fun setTarget(pos: Vec3, radius: Double, maxDrop: Int = 3, verticalTolerance: Double = 3.0) {
         val current = target
         if (current == null || current.distanceToSqr(pos) > 1.0) {
-            bestRemaining = Double.MAX_VALUE
+            lastRemaining = Double.MAX_VALUE
             noProgressTicks = 0
             path.clear()
             replanCooldown = 0
@@ -118,15 +118,16 @@ object PlayerMover {
             path.removeAt(0)
         }
         while (path.size >= 2) {
-            val first = path[0]
-            val second = path[1]
-            val d0x = first.x + 0.5 - feet.x
-            val d0z = first.z + 0.5 - feet.z
-            val d1x = second.x + 0.5 - feet.x
-            val d1z = second.z + 0.5 - feet.z
-            if (d1x * d1x + d1z * d1z <= d0x * d0x + d0z * d0z &&
-                abs(second.y - feet.y) <= 1.2
-            ) {
+            // Drop a corner ONLY when the player has moved past its plane
+            // along the outgoing segment. Distance comparisons are wrong on
+            // switchback routes and would cut corners through obstacles.
+            val p0 = path[0]
+            val p1 = path[1]
+            val segX = (p1.x - p0.x).toDouble()
+            val segZ = (p1.z - p0.z).toDouble()
+            val relX = feet.x - (p0.x + 0.5)
+            val relZ = feet.z - (p0.z + 0.5)
+            if (relX * segX + relZ * segZ > 0.0 && abs(p0.y - feet.y) <= 1.2) {
                 path.removeAt(0)
             } else {
                 break
@@ -155,15 +156,17 @@ object PlayerMover {
                 val sz = (b.z - a.z).toDouble()
                 remaining += sqrt(sx * sx + sz * sz)
             }
-            if (remaining < bestRemaining - PROGRESS_EPSILON) {
-                bestRemaining = remaining
+            if (remaining < lastRemaining - PROGRESS_EPSILON) {
                 noProgressTicks = 0
             } else {
                 noProgressTicks++
                 if (noProgressTicks == NO_PROGRESS_TICKS / 2) {
                     // Halfway to giving up: route fresh from the wedge spot.
+                    // The counter is NOT reset: a replan can never grant
+                    // fake progress, so real wedging always reaches the exit.
                     path.clear()
                     replanCooldown = 0
+                    lastRemaining = remaining
                     return Result.MOVING
                 }
                 if (noProgressTicks > NO_PROGRESS_TICKS) {
@@ -171,6 +174,7 @@ object PlayerMover {
                     return Result.STUCK
                 }
             }
+            lastRemaining = remaining
         }
 
         val wx = waypoint.x + 0.5 - feet.x
@@ -231,7 +235,6 @@ object PlayerMover {
         val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance = verticalTolerance)
         if (result != null) {
             path.addAll(result.waypoints)
-            bestRemaining = Double.MAX_VALUE
         }
         // Partial routes end early on purpose; re-plan sooner in that case.
         replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else 25
