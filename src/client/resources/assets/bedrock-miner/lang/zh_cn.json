@@ -118,8 +118,8 @@
   "bedrockminer.hud.event.eating": "» 饥饿：暂停进食",
   "bedrockminer.hud.event.pick_swapped": "» 已切换到新的镐",
   "bedrockminer.message.pickaxe_swapped": "§e正在更换镐 — 旧镐已退役。§r",
-  "bedrockminer.config.auto_eat.comment": "保持饥饿值接近全满。当比满值低3格时暂停（等待运行中的\\n活塞装置完成），从背包进食回满（优先金胡萝卜，绝不吃\\n有害食物），然后继续。",
+  "bedrockminer.config.auto_eat.comment": "保持饥饿值接近全满。当比满值低3格时暂停（等待运行中的\n活塞装置完成），从背包进食回满（优先金胡萝卜，绝不吃\n有害食物），然后继续。",
   "bedrockminer.hud.autopilot.escaping": "正在脱出坑洞…",
   "bedrockminer.hud.event.escape": "» 被困坑中：垫块脱出",
   "bedrockminer.message.autopilot.stuck": "全自动已停止：被困且无法垫块脱出，请前来救援。"
-}\n
+}

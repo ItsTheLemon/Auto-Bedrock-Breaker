@@ -94,7 +94,7 @@ object PathFinder {
         level: Level, start: BlockPos, goal: Vec3, acceptRadius: Double, maxDrop: Int,
         verticalTolerance: Double = 3.5,
     ): Boolean {
-        return find(level, start, goal, acceptRadius, maxDrop, maxNodes = 900, verticalTolerance = verticalTolerance)
+        return find(level, start, goal, acceptRadius, maxDrop, maxNodes = 600, verticalTolerance = verticalTolerance)
             ?.reachedGoal == true
     }
 

@@ -118,8 +118,8 @@
   "bedrockminer.hud.event.eating": "» hungry: pausing to eat",
   "bedrockminer.hud.event.pick_swapped": "» swapped to a fresh pickaxe",
   "bedrockminer.message.pickaxe_swapped": "§eSwapping pickaxe — worn one retired.§r",
-  "bedrockminer.config.auto_eat.comment": "Keep hunger near full. When it drops 3 bars below full, pause (after\\nrunning piston setups finish), eat from the inventory back to full\\n(golden carrots preferred, junk food never), then continue.",
+  "bedrockminer.config.auto_eat.comment": "Keep hunger near full. When it drops 3 bars below full, pause (after\nrunning piston setups finish), eat from the inventory back to full\n(golden carrots preferred, junk food never), then continue.",
   "bedrockminer.hud.autopilot.escaping": "Escaping a pit…",
   "bedrockminer.hud.event.escape": "» trapped in a pit: pillaring out",
   "bedrockminer.message.autopilot.stuck": "Automation stopped: trapped with no way to pillar out. Come rescue the player."
-}\n
+}

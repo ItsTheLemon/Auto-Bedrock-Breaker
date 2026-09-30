@@ -616,7 +616,7 @@ object AutoPilot {
         }
 
         // Walk NEAR the item, not onto it: vanilla pickup grabs it in passing.
-        PlayerMover.setTarget(item.position(), ITEM_PICKUP_RADIUS, 3, 1.4)
+        PlayerMover.setTarget(item.position(), ITEM_PICKUP_RADIUS, 3, 2.0)
         when (PlayerMover.tick(level, player)) {
             PlayerMover.Result.MOVING -> markProgress()
             PlayerMover.Result.STUCK -> handleUnreachableItem(level, player, area, item)
@@ -1093,12 +1093,19 @@ object AutoPilot {
                 tick - (firstSeen[entity.id] ?: tick) >= DESPAWN_RISK_TICKS
         }.sortedBy { it.distanceToSqr(player) }
 
-        for (candidate in candidates.take(8)) {
+        for (candidate in candidates.take(5)) {
             // Right next to us: no need to plan anything.
             if (candidate.distanceToSqr(player) <= 4.0) return candidate
-            if (PathFinder.canReach(level, player.blockPosition(), candidate.position(), ITEM_PICKUP_RADIUS, 3, verticalTolerance = 1.4)) {
+            if (PathFinder.canReach(
+                    level, player.blockPosition(), candidate.position(),
+                    ITEM_PICKUP_RADIUS, 3, verticalTolerance = 2.0,
+                )
+            ) {
                 return candidate
             }
+            // Do NOT re-run this failed search every selection: shelve the
+            // item briefly so the decision is instant next time.
+            deferItem(candidate.id, PASSED_ITEM_RETRY_TICKS)
         }
         return null
     }

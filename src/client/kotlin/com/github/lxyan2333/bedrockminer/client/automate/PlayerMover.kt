@@ -29,7 +29,7 @@ object PlayerMover {
     private const val PROGRESS_EPSILON = 0.02
     private const val JUMP_COOLDOWN_TICKS = 4
     /** Re-plan at least this often, in case the terrain changed. */
-    private const val REPLAN_INTERVAL = 40
+    private const val REPLAN_INTERVAL = 60
     private const val WAYPOINT_REACH = 0.5
     /** Max body/head turn per tick — smooth, human-looking rotation. */
     private const val TURN_RATE = 14.0f
@@ -197,7 +197,7 @@ object PlayerMover {
             path.addAll(result.waypoints)
         }
         // Partial routes end early on purpose; re-plan sooner in that case.
-        replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else 15
+        replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else 25
     }
 
     private fun nextWaypointValid(level: Level): Boolean {
