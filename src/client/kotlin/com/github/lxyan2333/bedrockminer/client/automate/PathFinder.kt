@@ -122,6 +122,31 @@ object PathFinder {
         result.reverse()
         // Drop the start cell — the player already stands there.
         if (result.isNotEmpty()) result.removeAt(0)
+        return simplify(result)
+    }
+
+    /**
+     * Merge straight same-height runs into single long segments: one clear
+     * line to walk, nothing to dither over. Turning points and every height
+     * change are kept, so jumps and drops still happen exactly on cue.
+     */
+    private fun simplify(points: List<BlockPos>): List<BlockPos> {
+        if (points.size <= 2) return points
+        val result = ArrayList<BlockPos>(points.size)
+        for (i in points.indices) {
+            if (i == 0 || i == points.size - 1) {
+                result.add(points[i])
+                continue
+            }
+            val previous = points[i - 1]
+            val current = points[i]
+            val next = points[i + 1]
+            val sameDirection =
+                next.x - current.x == current.x - previous.x &&
+                    next.z - current.z == current.z - previous.z &&
+                    next.y == current.y && current.y == previous.y
+            if (!sameDirection) result.add(current)
+        }
         return result
     }
 

@@ -30,7 +30,7 @@ object PlayerMover {
     private const val JUMP_COOLDOWN_TICKS = 4
     /** Re-plan at least this often, in case the terrain changed. */
     private const val REPLAN_INTERVAL = 60
-    private const val WAYPOINT_REACH = 0.5
+    private const val WAYPOINT_REACH = 0.7
     /** Max body/head turn per tick — smooth, human-looking rotation. */
     private const val TURN_RATE = 14.0f
 
@@ -108,7 +108,12 @@ object PlayerMover {
         }
 
         replanCooldown--
-        if (path.isEmpty() || replanCooldown <= 0 || !nextWaypointValid(level)) {
+        // A healthy route is NEVER re-planned: commit and go. Re-route only
+        // when there is no plan, the next step got blocked by world changes,
+        // or progress has genuinely stalled for a while.
+        if (path.isEmpty() || !nextWaypointValid(level) ||
+            (replanCooldown <= 0 && noProgressTicks > 5)
+        ) {
             replan(level, player, t)
             if (path.isEmpty()) {
                 // No route at all: stand still and fail fast via the watchdog.
@@ -124,9 +129,25 @@ object PlayerMover {
             failedPlans = 0
         }
 
-        // Advance past waypoints we are standing on.
+        // Advance past waypoints we are standing on — and past any waypoint
+        // we overshot: if the one after it is already closer, never turn back.
         while (path.isNotEmpty() && reachedWaypoint(feet, path[0])) {
             path.removeAt(0)
+        }
+        while (path.size >= 2) {
+            val first = path[0]
+            val second = path[1]
+            val d0x = first.x + 0.5 - feet.x
+            val d0z = first.z + 0.5 - feet.z
+            val d1x = second.x + 0.5 - feet.x
+            val d1z = second.z + 0.5 - feet.z
+            if (d1x * d1x + d1z * d1z <= d0x * d0x + d0z * d0z &&
+                abs(second.y - feet.y) <= 1.2
+            ) {
+                path.removeAt(0)
+            } else {
+                break
+            }
         }
         val waypoint = path.firstOrNull()
         if (waypoint == null) {
