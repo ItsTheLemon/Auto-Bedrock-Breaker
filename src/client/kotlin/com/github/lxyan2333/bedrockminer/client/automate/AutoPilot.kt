@@ -1042,10 +1042,48 @@ object AutoPilot {
         return best to count
     }
 
+    /** Cached distance-sorted remaining targets: picking the next location
+     *  is instant instead of a full box scan on every decision. */
+    private val targetCache = ArrayList<BlockPos>()
+    private var targetCacheTick = -10_000L
+
     private fun nearestRemainingTarget(level: Level, player: LocalPlayer, area: AreaRestriction.Area): BlockPos? {
-        val (nearest, count) = scanRemaining(level, player, area)
+        // Serve from the cache first, dropping entries that got mined or
+        // set aside in the meantime.
+        if (tick - targetCacheTick <= 100) {
+            while (targetCache.isNotEmpty()) {
+                val candidate = targetCache.removeAt(0)
+                if (unreachable.containsKey(candidate)) continue
+                if (!isTargetBlock(level, candidate)) continue
+                return candidate
+            }
+        }
+        // Cache stale or exhausted: one full refresh.
+        val targets = AutoMiner.targetBlockSet()
+        val origin = player.position()
+        val margin = AutoMiner.CLEANUP_MARGIN
+        val found = ArrayList<Pair<BlockPos, Double>>()
+        var count = 0
+        for (pos in BlockPos.betweenClosed(
+            BlockPos(area.minX - margin, area.minY - margin, area.minZ - margin),
+            BlockPos(area.maxX + margin, area.maxY + margin, area.maxZ + margin),
+        )) {
+            val state = level.getBlockState(pos)
+            if (area.contains(pos)) {
+                if (!AutoMiner.isMineTarget(targets, level, pos, state)) continue
+            } else {
+                if (!AutoMiner.isLeftoverContraption(state)) continue
+            }
+            count++
+            if (unreachable.containsKey(pos)) continue
+            found.add(pos.immutable() to origin.distanceToSqr(MinecraftClientCompat.blockCenter(pos)))
+        }
         hudRemainingTargets = count
-        return nearest
+        found.sortBy { it.second }
+        targetCache.clear()
+        for (i in 0 until minOf(found.size, 128)) targetCache.add(found[i].first)
+        targetCacheTick = tick
+        return if (targetCache.isEmpty()) null else targetCache.removeAt(0)
     }
 
     private fun countRemainingTargets(level: Level, area: AreaRestriction.Area): Int {

@@ -40,7 +40,7 @@ object PlayerMover {
     private var acceptRadius = 1.0
     private var maxDrop = 3
     private var verticalTolerance = 3.0
-    private var bestDistance = Double.MAX_VALUE
+    private var bestRemaining = Double.MAX_VALUE
     private var noProgressTicks = 0
     private var tickCounter = 0L
     private var lastJumpTick = -100L
@@ -60,7 +60,7 @@ object PlayerMover {
     fun setTarget(pos: Vec3, radius: Double, maxDrop: Int = 3, verticalTolerance: Double = 3.0) {
         val current = target
         if (current == null || current.distanceToSqr(pos) > 1.0) {
-            bestDistance = Double.MAX_VALUE
+            bestRemaining = Double.MAX_VALUE
             noProgressTicks = 0
             path.clear()
             replanCooldown = 0
@@ -90,29 +90,12 @@ object PlayerMover {
             return Result.ARRIVED
         }
 
-        if (horizontal < bestDistance - PROGRESS_EPSILON) {
-            bestDistance = horizontal
-            noProgressTicks = 0
-        } else {
-            noProgressTicks++
-            // Halfway to giving up: throw the plan away and route fresh from
-            // the exact spot we are wedged at.
-            if (noProgressTicks == NO_PROGRESS_TICKS / 2) {
-                path.clear()
-                replanCooldown = 0
-            }
-            if (noProgressTicks > NO_PROGRESS_TICKS) {
-                clear()
-                return Result.STUCK
-            }
-        }
-
         replanCooldown--
         // A healthy route is NEVER re-planned: commit and go. Re-route only
         // when there is no plan, the next step got blocked by world changes,
         // or progress has genuinely stalled for a while.
         if (path.isEmpty() || !nextWaypointValid(level) ||
-            (replanCooldown <= 0 && noProgressTicks > 5)
+            (replanCooldown <= 0 && noProgressTicks > 10)
         ) {
             replan(level, player, t)
             if (path.isEmpty()) {
@@ -156,6 +139,38 @@ object PlayerMover {
             replanCooldown = 0
             player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
             return Result.MOVING
+        }
+
+        // Progress = remaining distance ALONG the route. A curve around an
+        // obstacle still counts as progress; only true wedging trips this.
+        run {
+            var remaining = sqrt(
+                (waypoint.x + 0.5 - feet.x).let { it * it } +
+                    (waypoint.z + 0.5 - feet.z).let { it * it },
+            )
+            for (i in 0 until path.size - 1) {
+                val a = path[i]
+                val b = path[i + 1]
+                val sx = (b.x - a.x).toDouble()
+                val sz = (b.z - a.z).toDouble()
+                remaining += sqrt(sx * sx + sz * sz)
+            }
+            if (remaining < bestRemaining - PROGRESS_EPSILON) {
+                bestRemaining = remaining
+                noProgressTicks = 0
+            } else {
+                noProgressTicks++
+                if (noProgressTicks == NO_PROGRESS_TICKS / 2) {
+                    // Halfway to giving up: route fresh from the wedge spot.
+                    path.clear()
+                    replanCooldown = 0
+                    return Result.MOVING
+                }
+                if (noProgressTicks > NO_PROGRESS_TICKS) {
+                    clear()
+                    return Result.STUCK
+                }
+            }
         }
 
         val wx = waypoint.x + 0.5 - feet.x
@@ -216,6 +231,7 @@ object PlayerMover {
         val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance = verticalTolerance)
         if (result != null) {
             path.addAll(result.waypoints)
+            bestRemaining = Double.MAX_VALUE
         }
         // Partial routes end early on purpose; re-plan sooner in that case.
         replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else 25
