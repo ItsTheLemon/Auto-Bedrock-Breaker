@@ -53,10 +53,6 @@ object AutoPilot {
     // -- collection tuning --
     /** Inside a collection run, items this close count as worth grabbing too. */
     private const val CLOSE_ITEM_RADIUS = 8.0
-    // -- pickup while relocating (no flows are ever active then) --
-    /** Items this close to the walk are grabbed on the way to the next spot. */
-    private const val VIA_ITEM_RADIUS_SQR = 4.0 * 4.0
-    private const val VIA_ITEM_TIMEOUT_TICKS = 60
     /** First-seen age after which an item counts as despawn-endangered (the 4-minute mark of the 5-minute clock). */
     private const val DESPAWN_RISK_TICKS = 4800L
     /** Give up walking to a single item after this many ticks. */
@@ -155,10 +151,6 @@ object AutoPilot {
     /** How deep the mover may drop while walking to the sidestep spot. */
     private var sidestepDrop = 3
 
-    /** Item grabbed in passing during a relocation walk (no flows active then). */
-    private var viaItemId = -1
-    private var viaTicks = 0
-
     // -- overlay accessors (rendering) --
 
     val currentRelocateBlock: BlockPos?
@@ -168,12 +160,7 @@ object AutoPilot {
         get() = if (active && phase == Phase.CLEARING) clearTargets.toList() else emptyList()
 
     val currentItemTargetId: Int
-        get() = when {
-            !active -> -1
-            phase == Phase.COLLECTING -> currentItemId
-            phase == Phase.RELOCATING && viaItemId != -1 -> viaItemId
-            else -> -1
-        }
+        get() = if (active && phase == Phase.COLLECTING) currentItemId else -1
 
     val currentSidestepBlock: BlockPos?
         get() = if (active) sidestepTarget else null
@@ -356,8 +343,6 @@ object AutoPilot {
         hudRemainingTargets = 0
         hudItemsCollected = 0
         recentEvents.clear()
-        viaItemId = -1
-        viaTicks = 0
         lastProgressTick = 0L
         reachableCacheTick = Long.MIN_VALUE / 2
     }
@@ -369,8 +354,6 @@ object AutoPilot {
         reachableCacheTick = Long.MIN_VALUE / 2
         markProgress()
         retriedExhaust = false
-        viaItemId = -1
-        viaTicks = 0
         if (pause <= 0) {
             phase = target
             return
@@ -606,7 +589,7 @@ object AutoPilot {
         // walking, never stop and wait. (If a lip blocked the pickup, the
         // short defer brings the item back later.)
         var chained = 0
-        while (item != null && player.distanceToSqr(item) <= ITEM_PASS_DISTANCE_SQR && chained++ < 8) {
+        while (item != null && withinPickup(player, item) && chained++ < 8) {
             deferItem(item.id, PASSED_ITEM_RETRY_TICKS)
             item = selectCollectItem(level, player, area)
             itemTicks = 0
@@ -633,17 +616,14 @@ object AutoPilot {
         }
 
         // Walk NEAR the item, not onto it: vanilla pickup grabs it in passing.
-        PlayerMover.setTarget(item.position(), ITEM_PICKUP_RADIUS)
+        PlayerMover.setTarget(item.position(), ITEM_PICKUP_RADIUS, 3, 1.4)
         when (PlayerMover.tick(level, player)) {
             PlayerMover.Result.MOVING -> markProgress()
             PlayerMover.Result.STUCK -> handleUnreachableItem(level, player, area, item)
             PlayerMover.Result.ARRIVED -> {
-                // In pickup range (by the mover's measure) but the item is
-                // still there: a lip is in between — don't stand and wait.
-                arrivedTicks++
-                if (arrivedTicks > ARRIVED_GIVE_UP_TICKS) {
-                    deferItem(item.id, DEFER_RETRY_TICKS)
-                }
+                // As close as the mover gets yet not inside the pickup box:
+                // geometry is in the way. Move on immediately, no standing.
+                deferItem(item.id, DEFER_RETRY_TICKS)
             }
             else -> arrivedTicks = 0
         }
@@ -798,10 +778,6 @@ object AutoPilot {
             }
             return
         }
-
-        // Pick up items lying near the walk on the way — no flows are ever
-        // active while relocating, so a small detour is completely safe.
-        if (tickViaItem(level, player, area)) return
 
         val center = MinecraftClientCompat.blockCenter(target)
         val arriveDistance = maxOf(1.0, Configs.AutoMine.maxRange - ARRIVE_RANGE_MARGIN)
@@ -999,43 +975,6 @@ object AutoPilot {
             item !== net.minecraft.world.item.Items.PUFFERFISH
     }
 
-    /** @return true while a pickup detour is in progress during relocation. */
-    private fun tickViaItem(level: Level, player: LocalPlayer, area: AreaRestriction.Area): Boolean {
-        if (viaItemId == -1 && tick % 5 == 0L) {
-            viaItemId = wantedItemEntities(level, area) { entity ->
-                entity.distanceToSqr(player) <= VIA_ITEM_RADIUS_SQR &&
-                    easyToReach(level, player, entity)
-            }.minByOrNull { it.distanceToSqr(player) }?.id ?: -1
-            viaTicks = 0
-        }
-        if (viaItemId == -1) return false
-
-        val item = level.getEntity(viaItemId) as? ItemEntity
-        if (item == null || !item.isAlive ||
-            player.distanceToSqr(item) <= ITEM_PASS_DISTANCE_SQR
-        ) {
-            viaItemId = -1
-            return false
-        }
-        viaTicks++
-        if (viaTicks > VIA_ITEM_TIMEOUT_TICKS) {
-            // Opportunistic only: no blacklist, just move on with the walk.
-            viaItemId = -1
-            return false
-        }
-        PlayerMover.setTarget(item.position(), ITEM_PICKUP_RADIUS)
-        when (PlayerMover.tick(level, player)) {
-            PlayerMover.Result.STUCK -> {
-                viaItemId = -1
-                return false
-            }
-            else -> {
-                markProgress()
-                return true
-            }
-        }
-    }
-
     // -- queries --
 
     private fun isTargetBlock(level: Level, pos: BlockPos): Boolean {
@@ -1134,6 +1073,18 @@ object AutoPilot {
      * skipped in favour of a distant one just because it sits on rough
      * terrain, and an unreachable one never causes a doomed walk.
      */
+    /**
+     * Vanilla picks an item up when it enters the player's touch box: about
+     * one block around, half a block below the feet, two above. Passing an
+     * item only counts when it is truly inside that envelope.
+     */
+    private fun withinPickup(player: LocalPlayer, item: ItemEntity): Boolean {
+        val dx = item.x - player.x
+        val dz = item.z - player.z
+        val dy = item.y - player.y
+        return dx * dx + dz * dz <= 1.0 && dy > -0.55 && dy < 2.2
+    }
+
     private fun selectCollectItem(level: Level, player: LocalPlayer, area: AreaRestriction.Area): ItemEntity? {
         val closeRadiusSqr = CLOSE_ITEM_RADIUS * CLOSE_ITEM_RADIUS
         val candidates = wantedItemEntities(level, area) { entity ->
@@ -1145,7 +1096,7 @@ object AutoPilot {
         for (candidate in candidates.take(8)) {
             // Right next to us: no need to plan anything.
             if (candidate.distanceToSqr(player) <= 4.0) return candidate
-            if (PathFinder.canReach(level, player.blockPosition(), candidate.position(), ITEM_PICKUP_RADIUS, 3)) {
+            if (PathFinder.canReach(level, player.blockPosition(), candidate.position(), ITEM_PICKUP_RADIUS, 3, verticalTolerance = 1.4)) {
                 return candidate
             }
         }

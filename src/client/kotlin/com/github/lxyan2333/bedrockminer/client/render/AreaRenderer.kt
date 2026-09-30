@@ -417,79 +417,13 @@ object AreaRenderer : IRenderer {
                 )
             }
 
-            // ---- Ground radar: rings, grid, compass, sweep ----
+            // ---- Player mining-range circle + heading projection ----
             run {
                 val radius = Configs.AutoMine.maxRange
-                val ringColor = hueColor(hue, 0.6f)
-                val center = Vec3(feet.x, feet.y + 0.045, feet.z)
-
-                // Faint shaded disc: the radar has a surface, not just edges.
-                disc(buffer, center, radius, 40, cameraPos, hueColor(hue, 0.04f))
-                // Slightly stronger band under the tick ring.
-                ring(buffer, center, radius * 0.86, radius, 40, cameraPos, hueColor(hue, 0.06f))
-                // Classic afterglow wedge trailing the sweep.
-                val sweepNow = (now % 2400L).toDouble() / 2400.0 * Math.PI * 2.0
-                val glowSteps = 12
-                for (g in 0 until glowSteps) {
-                    val a1 = sweepNow - (g + 1) * 0.09
-                    val a2 = sweepNow - g * 0.09
-                    val alpha = 0.30f * (1f - g.toFloat() / glowSteps)
-                    quad(
-                        buffer,
-                        center,
-                        Vec3(center.x + radius * kotlin.math.cos(a1), center.y, center.z + radius * kotlin.math.sin(a1)),
-                        Vec3(center.x + radius * kotlin.math.cos(a2), center.y, center.z + radius * kotlin.math.sin(a2)),
-                        center,
-                        cameraPos, hueColor(hue, alpha),
-                    )
-                }
-
-                beamCircle(buffer, Vec3(feet.x, feet.y + 0.05, feet.z), radius, 40, cameraPos, ringColor, thick)
                 beamCircle(
-                    buffer, Vec3(feet.x, feet.y + 0.05, feet.z), radius * 0.55, 28, cameraPos,
-                    hueColor((hue + 0.15f) % 1f, 0.35f), thin,
+                    buffer, Vec3(feet.x, feet.y + 0.05, feet.z), radius, 40,
+                    cameraPos, hueColor(hue, 0.5f), thin,
                 )
-                // Radial ticks.
-                for (i in 0 until 8) {
-                    val angle = i.toDouble() / 8.0 * Math.PI * 2.0
-                    val cos = kotlin.math.cos(angle)
-                    val sin = kotlin.math.sin(angle)
-                    beam(
-                        buffer,
-                        Vec3(feet.x + radius * 0.88 * cos, feet.y + 0.05, feet.z + radius * 0.88 * sin),
-                        Vec3(feet.x + radius * cos, feet.y + 0.05, feet.z + radius * sin),
-                        cameraPos, ringColor.withAlpha(0.8f), thin,
-                    )
-                }
-                // Compass, north red.
-                for (cardinal in 0 until 4) {
-                    val angle = cardinal * Math.PI / 2.0
-                    val cos = kotlin.math.cos(angle)
-                    val sin = kotlin.math.sin(angle)
-                    val color = if (cardinal == 3) Color4f(1f, 0.3f, 0.3f, 0.95f) else Color4f(1f, 1f, 1f, 0.7f)
-                    beam(
-                        buffer,
-                        Vec3(feet.x + radius * 0.75 * cos, feet.y + 0.06, feet.z + radius * 0.75 * sin),
-                        Vec3(feet.x + radius * 1.08 * cos, feet.y + 0.06, feet.z + radius * 1.08 * sin),
-                        cameraPos, color, thick,
-                    )
-                }
-                // Rotating sweep with trails.
-                val sweepBase = (now % 2400L).toDouble() / 2400.0 * Math.PI * 2.0
-                for (trail in 0..2) {
-                    val angle = sweepBase - trail * 0.21
-                    beam(
-                        buffer,
-                        Vec3(feet.x, feet.y + 0.05, feet.z),
-                        Vec3(
-                            feet.x + radius * kotlin.math.cos(angle),
-                            feet.y + 0.05,
-                            feet.z + radius * kotlin.math.sin(angle),
-                        ),
-                        cameraPos, hueColor(hue, 0.85f - trail * 0.3f), if (trail == 0) thick else thin,
-                    )
-                }
-                // Heading projection while moving.
                 val motion = player.deltaMovement
                 val speedH = kotlin.math.sqrt(motion.x * motion.x + motion.z * motion.z)
                 if (speedH > 0.03) {
@@ -665,42 +599,6 @@ object AreaRenderer : IRenderer {
             pos.x + 1.005, pos.y + 1.005, pos.z + 1.005,
             cameraPos, color, thickness,
         )
-    }
-
-    /** Filled translucent disc (triangle fan out of degenerate quads). */
-    private fun disc(buffer: BufferBuilder, center: Vec3, radius: Double, segments: Int, cameraPos: Vec3, color: Color4f) {
-        var previous: Vec3? = null
-        for (i in 0..segments) {
-            val angle = i.toDouble() / segments * Math.PI * 2.0
-            val point = Vec3(
-                center.x + radius * kotlin.math.cos(angle),
-                center.y,
-                center.z + radius * kotlin.math.sin(angle),
-            )
-            previous?.let { quad(buffer, center, it, point, center, cameraPos, color) }
-            previous = point
-        }
-    }
-
-    /** Filled translucent annulus between two radii. */
-    private fun ring(
-        buffer: BufferBuilder, center: Vec3, innerRadius: Double, outerRadius: Double,
-        segments: Int, cameraPos: Vec3, color: Color4f,
-    ) {
-        var previousInner: Vec3? = null
-        var previousOuter: Vec3? = null
-        for (i in 0..segments) {
-            val angle = i.toDouble() / segments * Math.PI * 2.0
-            val cos = kotlin.math.cos(angle)
-            val sin = kotlin.math.sin(angle)
-            val inner = Vec3(center.x + innerRadius * cos, center.y, center.z + innerRadius * sin)
-            val outer = Vec3(center.x + outerRadius * cos, center.y, center.z + outerRadius * sin)
-            if (previousInner != null && previousOuter != null) {
-                quad(buffer, previousInner!!, previousOuter!!, outer, inner, cameraPos, color)
-            }
-            previousInner = inner
-            previousOuter = outer
-        }
     }
 
     private fun beamCircle(

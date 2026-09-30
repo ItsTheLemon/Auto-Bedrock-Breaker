@@ -39,6 +39,7 @@ object PathFinder {
         acceptRadius: Double,
         maxDrop: Int,
         maxNodes: Int = MAX_NODES,
+        verticalTolerance: Double = 3.5,
     ): Path? {
         val open = PriorityQueue<OpenEntry>(compareBy { it.f })
         val gScore = HashMap<BlockPos, Double>()
@@ -62,7 +63,7 @@ object PathFinder {
             val currentG = gScore[current] ?: continue
             expanded++
 
-            if (isGoal(current, goal, acceptRadius)) {
+            if (isGoal(current, goal, acceptRadius, verticalTolerance)) {
                 return Path(reconstruct(cameFrom, current), true)
             }
             val h = heuristic(current, goal)
@@ -89,16 +90,20 @@ object PathFinder {
     }
 
     /** Whether a full route to the goal exists (used to pre-validate item trips). */
-    fun canReach(level: Level, start: BlockPos, goal: Vec3, acceptRadius: Double, maxDrop: Int): Boolean {
-        return find(level, start, goal, acceptRadius, maxDrop, maxNodes = 900)?.reachedGoal == true
+    fun canReach(
+        level: Level, start: BlockPos, goal: Vec3, acceptRadius: Double, maxDrop: Int,
+        verticalTolerance: Double = 3.5,
+    ): Boolean {
+        return find(level, start, goal, acceptRadius, maxDrop, maxNodes = 900, verticalTolerance = verticalTolerance)
+            ?.reachedGoal == true
     }
 
-    private fun isGoal(pos: BlockPos, goal: Vec3, acceptRadius: Double): Boolean {
+    private fun isGoal(pos: BlockPos, goal: Vec3, acceptRadius: Double, verticalTolerance: Double): Boolean {
         val dx = pos.x + 0.5 - goal.x
         val dz = pos.z + 0.5 - goal.z
         if (dx * dx + dz * dz > (acceptRadius + 0.25) * (acceptRadius + 0.25)) return false
         val dy = goal.y - pos.y
-        return dy > -3.5 && dy < 3.5
+        return dy > -verticalTolerance && dy < verticalTolerance
     }
 
     private fun heuristic(pos: BlockPos, goal: Vec3): Double {

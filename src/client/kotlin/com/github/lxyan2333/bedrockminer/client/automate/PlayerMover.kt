@@ -23,14 +23,14 @@ import kotlin.math.sqrt
  */
 object PlayerMover {
     /** Blocks per tick; vanilla walking is ~0.216, stay just below it. */
-    private const val SPEED = 0.21
+    private const val SPEED = 0.215
     private const val JUMP_VELOCITY = 0.42
     private const val NO_PROGRESS_TICKS = 40
     private const val PROGRESS_EPSILON = 0.02
-    private const val JUMP_COOLDOWN_TICKS = 6
+    private const val JUMP_COOLDOWN_TICKS = 4
     /** Re-plan at least this often, in case the terrain changed. */
     private const val REPLAN_INTERVAL = 40
-    private const val WAYPOINT_REACH = 0.4
+    private const val WAYPOINT_REACH = 0.5
     /** Max body/head turn per tick — smooth, human-looking rotation. */
     private const val TURN_RATE = 14.0f
 
@@ -39,6 +39,7 @@ object PlayerMover {
     private var target: Vec3? = null
     private var acceptRadius = 1.0
     private var maxDrop = 3
+    private var verticalTolerance = 3.0
     private var bestDistance = Double.MAX_VALUE
     private var noProgressTicks = 0
     private var tickCounter = 0L
@@ -56,7 +57,7 @@ object PlayerMover {
     val currentPath: List<BlockPos>
         get() = if (target != null) path.toList() else emptyList()
 
-    fun setTarget(pos: Vec3, radius: Double, maxDrop: Int = 3) {
+    fun setTarget(pos: Vec3, radius: Double, maxDrop: Int = 3, verticalTolerance: Double = 3.0) {
         val current = target
         if (current == null || current.distanceToSqr(pos) > 1.0) {
             bestDistance = Double.MAX_VALUE
@@ -68,6 +69,7 @@ object PlayerMover {
         target = pos
         acceptRadius = radius
         this.maxDrop = maxDrop
+        this.verticalTolerance = verticalTolerance
     }
 
     fun clear() {
@@ -83,7 +85,7 @@ object PlayerMover {
         val dz = t.z - feet.z
         val horizontal = sqrt(dx * dx + dz * dz)
 
-        if (horizontal <= acceptRadius && abs(t.y - feet.y) <= 3.0) {
+        if (horizontal <= acceptRadius && abs(t.y - feet.y) <= verticalTolerance) {
             player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
             return Result.ARRIVED
         }
@@ -154,16 +156,24 @@ object PlayerMover {
             }
             player.setDeltaMovement(dirX * SPEED, player.deltaMovement.y, dirZ * SPEED)
 
-            // Turn body and head smoothly toward the walking direction —
-            // pure cosmetics on the local player; no packets, no process
-            // logic depends on it (flows set their own rotations).
-            val targetYaw = Math.toDegrees(atan2(-dirX, dirZ)).toFloat()
+            // Human-looking head motion: ease toward the walking direction
+            // with a slow wander, and gaze at a point well ahead near eye
+            // level instead of staring at the ground. Cosmetic only.
+            val t = tickCounter.toDouble()
+            val wanderYaw = (sin(t * 0.11) * 5.0 + sin(t * 0.031) * 3.5).toFloat()
+            val targetYaw = Math.toDegrees(atan2(-dirX, dirZ)).toFloat() + wanderYaw
             val yawDelta = Mth.wrapDegrees(targetYaw - player.yRot)
-            player.yRot = player.yRot + yawDelta.coerceIn(-TURN_RATE, TURN_RATE)
-            val dy = (waypoint.y + 0.5) - (feet.y + 1.62)
-            val targetPitch = Math.toDegrees(atan2(-dy, wHorizontal)).toFloat().coerceIn(-35f, 45f)
-            val pitchDelta = targetPitch - player.xRot
-            player.xRot = player.xRot + pitchDelta.coerceIn(-TURN_RATE / 2f, TURN_RATE / 2f)
+            player.yRot = player.yRot + (yawDelta * 0.15f).coerceIn(-8f, 8f)
+
+            val gaze = path.getOrNull(minOf(3, path.size - 1)) ?: waypoint
+            val gazeDx = gaze.x + 0.5 - feet.x
+            val gazeDz = gaze.z + 0.5 - feet.z
+            val gazeDist = maxOf(2.0, sqrt(gazeDx * gazeDx + gazeDz * gazeDz))
+            val gazeDy = (gaze.y + 1.4) - (feet.y + 1.62)
+            val wanderPitch = (sin(t * 0.17) * 2.0).toFloat()
+            val targetPitch = Math.toDegrees(atan2(-gazeDy, gazeDist)).toFloat()
+                .coerceIn(-18f, 22f) + wanderPitch
+            player.xRot = player.xRot + ((targetPitch - player.xRot) * 0.10f).coerceIn(-4f, 4f)
         }
 
         // Jump when the route says "one up", or when we are pressed against
@@ -182,7 +192,7 @@ object PlayerMover {
 
     private fun replan(level: Level, player: LocalPlayer, goal: Vec3) {
         path.clear()
-        val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop)
+        val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance = verticalTolerance)
         if (result != null) {
             path.addAll(result.waypoints)
         }
