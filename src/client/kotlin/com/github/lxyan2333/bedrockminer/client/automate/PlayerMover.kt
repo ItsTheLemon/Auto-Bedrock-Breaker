@@ -30,6 +30,12 @@ object PlayerMover {
     private const val SPRINT_SPEED = 0.27
     /** Sprint on any leg longer than this — players sprint everywhere. */
     private const val SPRINT_DISTANCE = 4.0
+    /** Horizontal speed while airborne in a jump: clears the step lip,
+     *  lands ON the aimed cell instead of flying past it. */
+    private const val AIR_SPEED = 0.19
+    /** Horizontal speed while falling a drop: nearly straight down, so
+     *  the landing is exactly the cell the route chose. */
+    private const val AIR_DROP_SPEED = 0.11
     private const val JUMP_VELOCITY = 0.42
     private const val NO_PROGRESS_TICKS = 40
     private const val PROGRESS_EPSILON = 0.02
@@ -48,6 +54,7 @@ object PlayerMover {
     private var noProgressTicks = 0
     private var tickCounter = 0L
     private var lastJumpTick = -100L
+    private var lastPassageReplanTick = -100L
 
     private val path = ArrayList<BlockPos>()
     private var planFailures = 0
@@ -185,9 +192,53 @@ object PlayerMover {
         }
         lastRemaining = remaining
 
+        // Look at what the body is about to enter BEFORE moving: solid
+        // steps (jump candidates), 2-high walls (never jumpable), and the
+        // sneaky one-block gap — feet fit, head does not, body never
+        // passes. On a diagonal walk BOTH cardinal faces are checked.
+        val rise = waypointY - feet.y
         val wx = waypointX - feet.x
         val wz = waypointZ - feet.z
         val wHorizontal = sqrt(wx * wx + wz * wz)
+        var blockedAhead = false
+        var stepJumpable = true
+        var headBlockedAhead = false
+        if (wHorizontal > 1.0e-3) {
+            val feetY = Mth.floor(feet.y + 0.001)
+            val aheadDirX = wx / wHorizontal
+            val aheadDirZ = wz / wHorizontal
+            val ahead = ArrayList<BlockPos>(3)
+            ahead.add(BlockPos(Mth.floor(feet.x + aheadDirX * 0.8), feetY, Mth.floor(feet.z + aheadDirZ * 0.8)))
+            if (abs(aheadDirX) > 0.25) {
+                ahead.add(BlockPos(Mth.floor(feet.x + (if (aheadDirX > 0) 0.8 else -0.8)), feetY, Mth.floor(feet.z)))
+            }
+            if (abs(aheadDirZ) > 0.25) {
+                ahead.add(BlockPos(Mth.floor(feet.x), feetY, Mth.floor(feet.z + (if (aheadDirZ > 0) 0.8 else -0.8))))
+            }
+            for (cell in ahead) {
+                val feetOpen = isPassable(level, cell)
+                val headOpen = isPassable(level, cell.above())
+                if (!feetOpen) {
+                    blockedAhead = true
+                    if (!headOpen || !isPassable(level, cell.above(2))) {
+                        stepJumpable = false
+                    }
+                } else if (!headOpen) {
+                    headBlockedAhead = true
+                }
+            }
+        }
+
+        // The one-block gap is a WALL for the body: route around it the
+        // moment it shows up in the walking direction, never press into it.
+        if (headBlockedAhead && path.isEmpty() &&
+            tickCounter - lastPassageReplanTick >= 8
+        ) {
+            lastPassageReplanTick = tickCounter
+            replan(level, player, goal, allowDirect = false)
+            dropPassedWaypoints(feet)
+        }
+
         if (wHorizontal > 1.0e-3) {
             var dirX = wx / wHorizontal
             var dirZ = wz / wHorizontal
@@ -202,11 +253,20 @@ object PlayerMover {
                 dirX /= norm
                 dirZ /= norm
             }
-            // Sprint on any real leg, walk the final precision steps —
-            // exactly how a player covers ground.
-            val sprinting = remaining > SPRINT_DISTANCE && noProgressTicks < 8
+            // Speed discipline is what makes parkour land: sprint only on
+            // flat clear ground, approach steps at a walk so the jump arc
+            // is short and controlled, and while airborne steer gently —
+            // drops fall nearly straight onto the cell the route chose.
+            val onGround = MinecraftClientCompat.isOnGround(player)
+            val sprinting = onGround && remaining > SPRINT_DISTANCE &&
+                noProgressTicks < 8 && rise <= 0.5 && !blockedAhead && !headBlockedAhead
             player.isSprinting = sprinting
-            val speed = if (sprinting) SPRINT_SPEED else SPEED
+            val speed = when {
+                !onGround && rise < -0.5 -> AIR_DROP_SPEED
+                !onGround -> AIR_SPEED
+                sprinting -> SPRINT_SPEED
+                else -> SPEED
+            }
             player.setDeltaMovement(dirX * speed, player.deltaMovement.y, dirZ * speed)
 
             // Human-looking head motion: ease toward the walking direction
@@ -235,34 +295,9 @@ object PlayerMover {
         // Jump ONLY when a genuine single step is physically in front of
         // the feet — one block up with open headroom — and never early:
         // jumping before the base wastes the arc and looks like failing
-        // the climb. A 2-high wall is never jumped at from any angle; on
-        // a diagonal walk BOTH cardinal faces are checked, since either
-        // can be the one actually blocking.
-        val rise = waypointY - feet.y
-        var blockedAhead = false
-        var stepJumpable = true
-        if (wHorizontal > 1.0e-3) {
-            val feetY = Mth.floor(feet.y + 0.001)
-            val dirX = wx / wHorizontal
-            val dirZ = wz / wHorizontal
-            val ahead = ArrayList<BlockPos>(3)
-            ahead.add(BlockPos(Mth.floor(feet.x + dirX * 0.8), feetY, Mth.floor(feet.z + dirZ * 0.8)))
-            if (abs(dirX) > 0.25) {
-                ahead.add(BlockPos(Mth.floor(feet.x + (if (dirX > 0) 0.8 else -0.8)), feetY, Mth.floor(feet.z)))
-            }
-            if (abs(dirZ) > 0.25) {
-                ahead.add(BlockPos(Mth.floor(feet.x), feetY, Mth.floor(feet.z + (if (dirZ > 0) 0.8 else -0.8))))
-            }
-            for (cell in ahead) {
-                if (!isPassable(level, cell)) {
-                    blockedAhead = true
-                    if (!isPassable(level, cell.above()) || !isPassable(level, cell.above(2))) {
-                        stepJumpable = false
-                    }
-                }
-            }
-        }
-        if (blockedAhead && stepJumpable && rise < 1.3 &&
+        // the climb. A 2-high wall or a head-blocked gap is never jumped
+        // at from any angle.
+        if (blockedAhead && stepJumpable && !headBlockedAhead && rise < 1.3 &&
             (rise > 0.5 || (player.horizontalCollision && rise >= -0.4)) &&
             MinecraftClientCompat.isOnGround(player) &&
             tickCounter - lastJumpTick >= JUMP_COOLDOWN_TICKS
