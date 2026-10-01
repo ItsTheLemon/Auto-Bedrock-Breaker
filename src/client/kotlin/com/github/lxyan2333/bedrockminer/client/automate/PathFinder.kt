@@ -16,8 +16,8 @@ import kotlin.math.sqrt
  * never proposes impossible jumps or paths through blocks.
  */
 object PathFinder {
-    private const val MAX_NODES = 1200
-    private const val HORIZONTAL_LIMIT = 20
+    private const val MAX_NODES = 3200
+    private const val HORIZONTAL_LIMIT = 28
     private const val UP_LIMIT = 8
     private const val DOWN_LIMIT = 10
 
@@ -171,7 +171,7 @@ object PathFinder {
         level: Level, start: BlockPos, goal: Vec3, acceptRadius: Double, maxDrop: Int,
         verticalTolerance: Double = 3.5,
     ): Boolean {
-        return find(level, start, goal, acceptRadius, maxDrop, maxNodes = 600, verticalTolerance = verticalTolerance)
+        return find(level, start, goal, acceptRadius, maxDrop, maxNodes = 900, verticalTolerance = verticalTolerance)
             ?.reachedGoal == true
     }
 

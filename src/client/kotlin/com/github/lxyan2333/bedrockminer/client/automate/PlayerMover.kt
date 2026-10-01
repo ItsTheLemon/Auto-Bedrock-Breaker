@@ -30,13 +30,9 @@ object PlayerMover {
     private const val NO_PROGRESS_TICKS = 40
     private const val PROGRESS_EPSILON = 0.02
     private const val JUMP_COOLDOWN_TICKS = 4
-    /** Healthy plans are left alone at least this long. */
-    private const val REPLAN_INTERVAL = 60
-    /** After a failed or partial plan, walk greedily this long before planning again. */
-    private const val REPLAN_RETRY = 20
-    /** Within this range and planless, walk straight at the goal — no planning at all. */
-    private const val GLIDE_RANGE = 4.0
     private const val WAYPOINT_REACH = 0.7
+    /** Consecutive failed plans toward a far goal before giving it up. */
+    private const val MAX_PLAN_FAILURES = 2
 
     enum class Result { IDLE, MOVING, ARRIVED, STUCK }
 
@@ -50,7 +46,7 @@ object PlayerMover {
     private var lastJumpTick = -100L
 
     private val path = ArrayList<BlockPos>()
-    private var replanCooldown = 0
+    private var planFailures = 0
 
     /** The point currently walked to, for the action overlay. */
     val currentTarget: Vec3?
@@ -66,7 +62,7 @@ object PlayerMover {
             lastRemaining = Double.MAX_VALUE
             noProgressTicks = 0
             path.clear()
-            replanCooldown = 0
+            planFailures = 0
         }
         target = pos
         acceptRadius = radius
@@ -92,39 +88,58 @@ object PlayerMover {
             return Result.ARRIVED
         }
 
-        replanCooldown--
         dropPassedWaypoints(feet)
 
-        // Never walk blind over a dangerous edge: when planless, probe the
-        // cell ahead — a 2+ drop into an inescapable pit (or past maxDrop)
-        // demands a real plan, which routes around holes like the search
-        // always does. If no route exists, stand at the rim; falling in is
-        // never an option.
-        val glideHazard = path.isEmpty() && horizontal > 1.0e-3 &&
-            hazardAhead(level, feet, dx / horizontal, dz / horizontal)
+        // The last stretch to the goal is walked directly with no route —
+        // routes are made of cell centers, the goal is an exact point.
+        val glideRange = maxOf(1.5, acceptRadius + 1.2)
 
-        // Plan ONLY when something is genuinely wrong: the next step got
-        // blocked by world changes, progress has truly stalled, the goal is
-        // too far to walk at blindly, or a hole blocks the blind walk. A
-        // healthy plan is never second-guessed, and planning never stops
-        // the walking below.
+        // ROUTE FIRST, ALWAYS. Beyond the last stretch the player never
+        // walks blind: any missing route is computed on the spot (it costs
+        // microseconds), a route broken by world changes is rebuilt, and a
+        // route that stops making progress is re-solved at fixed marks
+        // while the sideways wiggle tries to slip free between them.
+        val needPlan = path.isEmpty() && horizontal > glideRange
         val planBroken = path.isNotEmpty() && !nextWaypointValid(level)
-        val stalled = noProgressTicks >= 10 && replanCooldown <= 0
-        val farWithoutPlan = path.isEmpty() && horizontal > GLIDE_RANGE && replanCooldown <= 0
-        if (planBroken || stalled || farWithoutPlan || (glideHazard && replanCooldown <= 0)) {
-            replan(level, player, goal)
+        val stalled = noProgressTicks == 6 || noProgressTicks == 18 || noProgressTicks == 30
+        if (needPlan || planBroken || stalled) {
+            // A stall means the simple route did not survive contact with
+            // the terrain: go straight to the full search, never hand back
+            // the same straight line that just failed.
+            replan(level, player, goal, allowDirect = noProgressTicks < 6)
             dropPassedWaypoints(feet)
-        }
-        if (glideHazard && path.isEmpty()) {
-            // Hole ahead and no route around it yet: hold at the edge and
-            // let the watchdog hand the goal back if this never resolves.
-            player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
-            noProgressTicks++
-            if (noProgressTicks > NO_PROGRESS_TICKS) {
-                clear()
-                return Result.STUCK
+            if (path.isEmpty() && horizontal > glideRange) {
+                // No route exists from here. Give the goal back fast so the
+                // caller picks a different one — no standing, no wishing.
+                planFailures++
+                if (planFailures >= MAX_PLAN_FAILURES) {
+                    clear()
+                    return Result.STUCK
+                }
+            } else {
+                planFailures = 0
             }
-            return Result.MOVING
+        }
+
+        // Even on the short final stretch, never walk blind over a
+        // dangerous edge: probe the ground ahead and route around any
+        // inescapable pit instead of falling in.
+        if (path.isEmpty() && horizontal > 1.0e-3 &&
+            hazardAhead(level, feet, dx / horizontal, dz / horizontal)
+        ) {
+            replan(level, player, goal, allowDirect = false)
+            dropPassedWaypoints(feet)
+            if (path.isEmpty()) {
+                // Hole ahead and no route around it: hold at the edge and
+                // give the goal up quickly rather than ever stepping in.
+                player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
+                noProgressTicks += 4
+                if (noProgressTicks > NO_PROGRESS_TICKS) {
+                    clear()
+                    return Result.STUCK
+                }
+                return Result.MOVING
+            }
         }
 
         // Steer at the next route cell — or straight at the goal when no
@@ -267,26 +282,25 @@ object PlayerMover {
         }
     }
 
-    private fun replan(level: Level, player: LocalPlayer, goal: Vec3) {
+    private fun replan(level: Level, player: LocalPlayer, goal: Vec3, allowDirect: Boolean = true) {
         path.clear()
-        // Straight line first: on open ground this is the whole plan,
-        // computed instantly. An empty result means "close enough to walk
-        // straight" — the glide covers it with no route at all.
-        val direct = PathFinder.directWalk(
-            level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance,
-        )
-        if (direct != null) {
-            path.addAll(direct)
-            replanCooldown = REPLAN_INTERVAL
-            return
+        // A verified-clear straight line is the ideal route and costs
+        // almost nothing to check; everything else goes to the search,
+        // which knows every legal move and routes AROUND obstacles —
+        // walls are walked past, never walked into.
+        if (allowDirect) {
+            val direct = PathFinder.directWalk(
+                level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance,
+            )
+            if (direct != null) {
+                path.addAll(direct)
+                return
+            }
         }
         val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance = verticalTolerance)
         if (result != null) {
             path.addAll(result.waypoints)
         }
-        // Partial routes end early on purpose, and after a failed plan the
-        // glide keeps walking toward the goal: retry sooner in both cases.
-        replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else REPLAN_RETRY
     }
 
     /**
