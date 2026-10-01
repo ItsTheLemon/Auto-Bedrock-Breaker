@@ -56,7 +56,9 @@ object AutoPilot {
     /** First-seen age after which an item counts as despawn-endangered (the 4-minute mark of the 5-minute clock). */
     private const val DESPAWN_RISK_TICKS = 4800L
     /** Give up walking to a single item after this many ticks. */
-    private const val ITEM_WALK_TIMEOUT_TICKS = 60
+    /** Long enough for a real detour route (stairs, around a wall) to be
+     *  walked to the far corner of the box — never cut a good trip short. */
+    private const val ITEM_WALK_TIMEOUT_TICKS = 160
     /** Walk almost onto the item — borderline distances miss the pickup box. */
     private const val ITEM_PICKUP_RADIUS = 0.6
     /** Inside this distance the item is as good as picked up — retarget instantly. */
@@ -68,6 +70,8 @@ object AutoPilot {
     /** Terrain-blocked items retry after this (the area flattens over time). */
     private const val DEFER_RETRY_TICKS = 1200L
     private const val DEFER_HARD_RETRY_TICKS = 2400L
+    /** An item a route EXISTS to retries fast — the despawn clock is running. */
+    private const val DEFER_WALKABLE_RETRY_TICKS = 200L
     private const val ITEM_SEARCH_MARGIN = 8.0
     /** How often (ticks) the item tracker refreshes first-seen ages. */
     private const val ITEM_SWEEP_INTERVAL = 20
@@ -652,6 +656,18 @@ object AutoPilot {
     private fun handleUnreachableItem(level: Level, player: LocalPlayer, area: AreaRestriction.Area, item: ItemEntity) {
         if (!collectAll) {
             deferItem(item.id, DEFER_RETRY_TICKS)
+            return
+        }
+        // Breaking through is the LAST resort, never a shortcut. If the
+        // router can prove a walking route to the item exists (stairs,
+        // around the wall), the walk just failed transiently — retry it
+        // soon and leave the world alone.
+        if (PathFinder.canReach(
+                level, player.blockPosition(), item.position(),
+                ITEM_PICKUP_RADIUS + 0.6, 3, verticalTolerance = 2.0,
+            )
+        ) {
+            deferItem(item.id, DEFER_WALKABLE_RETRY_TICKS)
             return
         }
         if (clearRounds >= MAX_CLEAR_ROUNDS) {

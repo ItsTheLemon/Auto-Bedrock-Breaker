@@ -26,6 +26,10 @@ import kotlin.math.sqrt
 object PlayerMover {
     /** Blocks per tick; vanilla walking is ~0.216, stay just below it. */
     private const val SPEED = 0.215
+    /** Blocks per tick while sprinting; vanilla sprint is ~0.28. */
+    private const val SPRINT_SPEED = 0.27
+    /** Sprint on any leg longer than this — players sprint everywhere. */
+    private const val SPRINT_DISTANCE = 4.0
     private const val JUMP_VELOCITY = 0.42
     private const val NO_PROGRESS_TICKS = 40
     private const val PROGRESS_EPSILON = 0.02
@@ -85,6 +89,7 @@ object PlayerMover {
 
         if (horizontal <= acceptRadius && abs(goal.y - feet.y) <= verticalTolerance) {
             player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
+            player.isSprinting = false
             return Result.ARRIVED
         }
 
@@ -99,16 +104,20 @@ object PlayerMover {
         // microseconds), a route broken by world changes is rebuilt, and a
         // route that stops making progress is re-solved at fixed marks
         // while the sideways wiggle tries to slip free between them.
-        val needPlan = path.isEmpty() && horizontal > glideRange
+        // A goal up or down a ledge is NEVER walked at blind — only the
+        // router knows where the stairs are. Blind walking is for flat,
+        // close, open ground and nothing else.
+        val goalOffLevel = abs(goal.y - feet.y) > 1.2
+        val needPlan = path.isEmpty() && (horizontal > glideRange || goalOffLevel)
         val planBroken = path.isNotEmpty() && !nextWaypointValid(level)
-        val stalled = noProgressTicks == 6 || noProgressTicks == 18 || noProgressTicks == 30
+        val stalled = noProgressTicks == 4 || noProgressTicks == 16 || noProgressTicks == 28
         if (needPlan || planBroken || stalled) {
             // A stall means the simple route did not survive contact with
             // the terrain: go straight to the full search, never hand back
             // the same straight line that just failed.
-            replan(level, player, goal, allowDirect = noProgressTicks < 6)
+            replan(level, player, goal, allowDirect = noProgressTicks < 4)
             dropPassedWaypoints(feet)
-            if (path.isEmpty() && horizontal > glideRange) {
+            if (path.isEmpty() && (horizontal > glideRange || goalOffLevel)) {
                 // No route exists from here. Give the goal back fast so the
                 // caller picks a different one — no standing, no wishing.
                 planFailures++
@@ -193,7 +202,12 @@ object PlayerMover {
                 dirX /= norm
                 dirZ /= norm
             }
-            player.setDeltaMovement(dirX * SPEED, player.deltaMovement.y, dirZ * SPEED)
+            // Sprint on any real leg, walk the final precision steps —
+            // exactly how a player covers ground.
+            val sprinting = remaining > SPRINT_DISTANCE && noProgressTicks < 8
+            player.isSprinting = sprinting
+            val speed = if (sprinting) SPRINT_SPEED else SPEED
+            player.setDeltaMovement(dirX * speed, player.deltaMovement.y, dirZ * speed)
 
             // Human-looking head motion: ease toward the walking direction
             // with a slow wander, and gaze at a point well ahead near eye
