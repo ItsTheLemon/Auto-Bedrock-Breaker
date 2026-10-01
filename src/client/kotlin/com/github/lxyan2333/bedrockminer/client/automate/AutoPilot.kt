@@ -1027,9 +1027,22 @@ object AutoPilot {
                 val pos = BlockPos.containing(point.x, point.y + dy, point.z)
                 val state = level.getBlockState(pos)
                 if (!AutoMiner.isMineTarget(targets, level, pos, state)) continue
-                if (pos.x < area.minX - CLEAR_BOX_MARGIN || pos.x > area.maxX + CLEAR_BOX_MARGIN) continue
-                if (pos.y < area.minY - CLEAR_BOX_MARGIN || pos.y > area.maxY + CLEAR_BOX_MARGIN) continue
-                if (pos.z < area.minZ - CLEAR_BOX_MARGIN || pos.z > area.maxZ + CLEAR_BOX_MARGIN) continue
+                if (area.contains(pos)) {
+                    // inside the box: anything minable may be cleared
+                } else {
+                    // Outside the box NOTHING of the world is ours to break:
+                    // only unbreakables (the piston method's own targets) and
+                    // stranded contraption pieces, within a small margin.
+                    // Beacon bases, builds, iron blocks stay untouched.
+                    if (state.getDestroySpeed(level, pos) >= 0f &&
+                        !AutoMiner.isLeftoverContraption(state)
+                    ) {
+                        continue
+                    }
+                    if (pos.x < area.minX - CLEAR_BOX_MARGIN || pos.x > area.maxX + CLEAR_BOX_MARGIN) continue
+                    if (pos.y < area.minY - CLEAR_BOX_MARGIN || pos.y > area.maxY + CLEAR_BOX_MARGIN) continue
+                    if (pos.z < area.minZ - CLEAR_BOX_MARGIN || pos.z > area.maxZ + CLEAR_BOX_MARGIN) continue
+                }
                 result.add(pos.immutable())
                 if (result.size >= MAX_CLEAR_BLOCKS) return result.toList()
             }

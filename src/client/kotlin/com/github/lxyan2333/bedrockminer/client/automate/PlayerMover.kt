@@ -95,16 +95,36 @@ object PlayerMover {
         replanCooldown--
         dropPassedWaypoints(feet)
 
+        // Never walk blind over a dangerous edge: when planless, probe the
+        // cell ahead — a 2+ drop into an inescapable pit (or past maxDrop)
+        // demands a real plan, which routes around holes like the search
+        // always does. If no route exists, stand at the rim; falling in is
+        // never an option.
+        val glideHazard = path.isEmpty() && horizontal > 1.0e-3 &&
+            hazardAhead(level, feet, dx / horizontal, dz / horizontal)
+
         // Plan ONLY when something is genuinely wrong: the next step got
-        // blocked by world changes, progress has truly stalled, or the goal
-        // is too far to walk at blindly with no route. A healthy plan is
-        // never second-guessed, and planning never stops the walking below.
+        // blocked by world changes, progress has truly stalled, the goal is
+        // too far to walk at blindly, or a hole blocks the blind walk. A
+        // healthy plan is never second-guessed, and planning never stops
+        // the walking below.
         val planBroken = path.isNotEmpty() && !nextWaypointValid(level)
         val stalled = noProgressTicks >= 10 && replanCooldown <= 0
         val farWithoutPlan = path.isEmpty() && horizontal > GLIDE_RANGE && replanCooldown <= 0
-        if (planBroken || stalled || farWithoutPlan) {
+        if (planBroken || stalled || farWithoutPlan || (glideHazard && replanCooldown <= 0)) {
             replan(level, player, goal)
             dropPassedWaypoints(feet)
+        }
+        if (glideHazard && path.isEmpty()) {
+            // Hole ahead and no route around it yet: hold at the edge and
+            // let the watchdog hand the goal back if this never resolves.
+            player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
+            noProgressTicks++
+            if (noProgressTicks > NO_PROGRESS_TICKS) {
+                clear()
+                return Result.STUCK
+            }
+            return Result.MOVING
         }
 
         // Steer at the next route cell — or straight at the goal when no
@@ -184,17 +204,31 @@ object PlayerMover {
         }
 
         // Jump when the route says "one up", or when we are pressed against
-        // a step while the route does not lead downward — but ONLY if the
-        // step ahead is genuinely jumpable: exactly one block up with open
-        // headroom. A player cannot jump a 2-high wall, ever; spamming jumps
-        // at one just burns time until the watchdog routes around it.
+        // a step while the route does not lead downward — but ONLY if every
+        // cell being pressed into is genuinely jumpable: at most one block
+        // up with open headroom. A player cannot jump a 2-high wall, ever;
+        // spamming jumps at one just burns time. On a diagonal walk BOTH
+        // cardinal components are checked, since either face can be the one
+        // actually blocking.
         val rise = waypointY - feet.y
         val stepJumpable = rise < 1.3 && wHorizontal > 1.0e-3 && run {
-            val aheadX = Mth.floor(feet.x + wx / wHorizontal * 0.8)
-            val aheadY = Mth.floor(feet.y + 0.001)
-            val aheadZ = Mth.floor(feet.z + wz / wHorizontal * 0.8)
-            isPassable(level, BlockPos(aheadX, aheadY + 1, aheadZ)) &&
-                isPassable(level, BlockPos(aheadX, aheadY + 2, aheadZ))
+            val feetY = Mth.floor(feet.y + 0.001)
+            val dirX = wx / wHorizontal
+            val dirZ = wz / wHorizontal
+            val ahead = ArrayList<BlockPos>(3)
+            ahead.add(BlockPos(Mth.floor(feet.x + dirX * 0.8), feetY, Mth.floor(feet.z + dirZ * 0.8)))
+            if (abs(dirX) > 0.25) {
+                ahead.add(BlockPos(Mth.floor(feet.x + (if (dirX > 0) 0.8 else -0.8)), feetY, Mth.floor(feet.z)))
+            }
+            if (abs(dirZ) > 0.25) {
+                ahead.add(BlockPos(Mth.floor(feet.x), feetY, Mth.floor(feet.z + (if (dirZ > 0) 0.8 else -0.8))))
+            }
+            ahead.all { cell ->
+                // Open cells are no obstacle; a solid one must be a single
+                // step with air for the body above its top to be jumpable.
+                isPassable(level, cell) ||
+                    (isPassable(level, cell.above()) && isPassable(level, cell.above(2)))
+            }
         }
         if ((rise > 0.5 || (player.horizontalCollision && rise >= -0.4)) &&
             stepJumpable &&
@@ -253,6 +287,32 @@ object PlayerMover {
         // Partial routes end early on purpose, and after a failed plan the
         // glide keeps walking toward the goal: retry sooner in both cases.
         replanCooldown = if (result?.reachedGoal == true) REPLAN_INTERVAL else REPLAN_RETRY
+    }
+
+    /**
+     * True when the next cell in the walk direction is an open drop that
+     * ends 2+ deep in an inescapable pit, or deeper than [maxDrop]. Used
+     * only while gliding without a route — planned routes already refuse
+     * such cells.
+     */
+    private fun hazardAhead(level: Level, feet: Vec3, dirX: Double, dirZ: Double): Boolean {
+        val aheadX = Mth.floor(feet.x + dirX * 0.9)
+        val aheadY = Mth.floor(feet.y + 0.001)
+        val aheadZ = Mth.floor(feet.z + dirZ * 0.9)
+        if (aheadX == Mth.floor(feet.x) && aheadZ == Mth.floor(feet.z)) return false
+        val ahead = BlockPos(aheadX, aheadY, aheadZ)
+        if (!isPassable(level, ahead)) return false // a wall, not a hole
+        if (!isPassable(level, ahead.below())) return false // solid ground
+        var probe = ahead.below()
+        var depth = 1
+        while (depth <= maxDrop) {
+            if (!isPassable(level, probe.below())) {
+                return depth >= 2 && PathFinder.isTrapCell(level, probe)
+            }
+            probe = probe.below()
+            depth++
+        }
+        return true // bottomless within maxDrop: never step off blind
     }
 
     private fun nextWaypointValid(level: Level): Boolean {
