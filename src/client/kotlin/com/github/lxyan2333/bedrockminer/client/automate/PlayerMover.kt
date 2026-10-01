@@ -417,7 +417,7 @@ object PlayerMover {
         var depth = 1
         while (depth <= maxDrop) {
             if (!isPassable(level, probe.below())) {
-                return depth >= 2 && PathFinder.isTrapCell(level, probe)
+                return depth >= 2 && PathFinder.isTrapRegion(level, probe, 8)
             }
             probe = probe.below()
             depth++

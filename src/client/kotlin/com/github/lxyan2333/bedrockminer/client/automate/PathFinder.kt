@@ -163,7 +163,7 @@ object PathFinder {
                         if (!PlayerMover.isPassable(level, probe.above())) return null
                     }
                     if (landing == null) return null
-                    if (depth >= 2 && isTrapCell(level, landing)) return null
+                    if (depth >= 2 && isTrapRegion(level, landing, 8)) return null
                     cell = landing
                 }
             }
@@ -261,6 +261,46 @@ object PathFinder {
         return true
     }
 
+    /**
+     * Multi-cell pit test: floods the flat-walkable region around [start].
+     * Trapped means NO cell of the whole region offers a jump-out or an
+     * open drop onward — a 2x2 pit is just as much a trap as a 1x1, even
+     * though every one of its cells can "walk" into a neighbor pit cell.
+     * A region bigger than [cap] cells is open ground, not a pit.
+     */
+    fun isTrapRegion(level: Level, start: BlockPos, cap: Int = 12): Boolean {
+        val visited = HashSet<BlockPos>()
+        val queue = ArrayDeque<BlockPos>()
+        visited.add(start)
+        queue.add(start)
+        while (queue.isNotEmpty()) {
+            val cell = queue.removeFirst()
+            for ((dx, dz) in CARDINALS) {
+                val side = BlockPos(cell.x + dx, cell.y, cell.z + dz)
+                val feetOpen = PlayerMover.isPassable(level, side)
+                val headOpen = PlayerMover.isPassable(level, side.above())
+                if (feetOpen && headOpen) {
+                    if (PlayerMover.isPassable(level, side.below())) {
+                        // Open drop onward: not sealed in here.
+                        return false
+                    }
+                    // Walkable continuation on solid ground — same pit or
+                    // the way out; flood it.
+                    if (visited.add(side)) {
+                        if (visited.size > cap) return false
+                        queue.add(side)
+                    }
+                } else if (!feetOpen && headOpen &&
+                    PlayerMover.isPassable(level, side.above(2)) &&
+                    PlayerMover.isPassable(level, cell.above(2))
+                ) {
+                    return false // a jump-out exists somewhere in the region
+                }
+            }
+        }
+        return true
+    }
+
     private fun resolveStart(level: Level, start: BlockPos): BlockPos {
         if (isStandable(level, start)) return start
         // Below (falling / standing on an edge with the cell itself floating).
@@ -320,7 +360,7 @@ object PathFinder {
                     if (!PlayerMover.isPassable(level, cell)) break // fell into a wall: invalid
                     if (!PlayerMover.isPassable(level, cell.below())) {
                         // Never drop 2+ into a pit that has no way back out.
-                        if (depth < 2 || !isTrapCell(level, cell)) {
+                        if (depth < 2 || !isTrapRegion(level, cell, 8)) {
                             visit(cell, 1.0 + 0.3 * depth)
                         }
                         break

@@ -157,6 +157,9 @@ object AutoPilot {
     private var relocateTarget: BlockPos? = null
     private var relocateStallTicks = 0
     private var lastArrivedTarget: BlockPos? = null
+    /** Consecutive nothing-is-walkable rounds; two mean mining in place is
+     *  not freeing us and it is time to pillar out unconditionally. */
+    private var boxedInRounds = 0
 
     /** Stand-aside spot used when the next target is under the player's feet. */
     private var sidestepTarget: BlockPos? = null
@@ -443,7 +446,7 @@ object AutoPilot {
         if (phase != Phase.ESCAPING && tick % TRAP_CHECK_INTERVAL == 0L &&
             !AutoMiner.hasActiveFlows() &&
             MinecraftClientCompat.isOnGround(player) &&
-            PathFinder.isTrapCell(level, player.blockPosition())
+            PathFinder.isTrapRegion(level, player.blockPosition())
         ) {
             if (pillarItem(player) != null) {
                 event("bedrockminer.hud.event.escape")
@@ -755,7 +758,7 @@ object AutoPilot {
             )
         ) {
             warmTarget = candidate
-        } else if (!PathFinder.isTrapCell(level, player.blockPosition())) {
+        } else if (!PathFinder.isTrapRegion(level, player.blockPosition())) {
             // Only mark the TARGET bad when the player is free to move —
             // from inside a pit everything looks unreachable, and that is
             // the player's problem, not the target's.
@@ -806,7 +809,11 @@ object AutoPilot {
             for (pos in softFailed) unreachable.remove(pos)
             AutoMiner.clearCooldowns()
             AutoMiner.requestScan()
-            if (AutoMiner.hasReachableWork(level, player)) {
+            boxedInRounds++
+            // Mining in place gets two chances to open a way; after that
+            // it clearly is not working (unlaunchable angles, bare pit) —
+            // pillar out unconditionally.
+            if (boxedInRounds <= 2 && AutoMiner.hasReachableWork(level, player)) {
                 event("bedrockminer.hud.event.escape")
                 enterPhase(Phase.MINING)
                 return
@@ -824,6 +831,7 @@ object AutoPilot {
             return
         }
         if (next != null) {
+            boxedInRounds = 0
             relocateTarget = next
             relocateStallTicks = 0
             // Standing on (or right above) the target blocks mining it: first
@@ -1064,7 +1072,7 @@ object AutoPilot {
                 enterPhase(Phase.MINING)
                 return
             }
-        } else if (!PathFinder.isTrapCell(level, player.blockPosition())) {
+        } else if (!PathFinder.isTrapRegion(level, player.blockPosition())) {
             // A way out exists again: back to work.
             AutoMiner.clearCooldowns()
             AutoMiner.requestScan()
