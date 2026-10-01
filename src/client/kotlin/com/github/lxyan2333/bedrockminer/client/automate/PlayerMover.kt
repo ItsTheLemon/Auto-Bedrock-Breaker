@@ -232,15 +232,16 @@ object PlayerMover {
             player.xRot = player.xRot + ((targetPitch - player.xRot) * 0.10f).coerceIn(-4f, 4f)
         }
 
-        // Jump when the route says "one up", or when we are pressed against
-        // a step while the route does not lead downward — but ONLY if every
-        // cell being pressed into is genuinely jumpable: at most one block
-        // up with open headroom. A player cannot jump a 2-high wall, ever;
-        // spamming jumps at one just burns time. On a diagonal walk BOTH
-        // cardinal components are checked, since either face can be the one
-        // actually blocking.
+        // Jump ONLY when a genuine single step is physically in front of
+        // the feet — one block up with open headroom — and never early:
+        // jumping before the base wastes the arc and looks like failing
+        // the climb. A 2-high wall is never jumped at from any angle; on
+        // a diagonal walk BOTH cardinal faces are checked, since either
+        // can be the one actually blocking.
         val rise = waypointY - feet.y
-        val stepJumpable = rise < 1.3 && wHorizontal > 1.0e-3 && run {
+        var blockedAhead = false
+        var stepJumpable = true
+        if (wHorizontal > 1.0e-3) {
             val feetY = Mth.floor(feet.y + 0.001)
             val dirX = wx / wHorizontal
             val dirZ = wz / wHorizontal
@@ -252,15 +253,17 @@ object PlayerMover {
             if (abs(dirZ) > 0.25) {
                 ahead.add(BlockPos(Mth.floor(feet.x), feetY, Mth.floor(feet.z + (if (dirZ > 0) 0.8 else -0.8))))
             }
-            ahead.all { cell ->
-                // Open cells are no obstacle; a solid one must be a single
-                // step with air for the body above its top to be jumpable.
-                isPassable(level, cell) ||
-                    (isPassable(level, cell.above()) && isPassable(level, cell.above(2)))
+            for (cell in ahead) {
+                if (!isPassable(level, cell)) {
+                    blockedAhead = true
+                    if (!isPassable(level, cell.above()) || !isPassable(level, cell.above(2))) {
+                        stepJumpable = false
+                    }
+                }
             }
         }
-        if ((rise > 0.5 || (player.horizontalCollision && rise >= -0.4)) &&
-            stepJumpable &&
+        if (blockedAhead && stepJumpable && rise < 1.3 &&
+            (rise > 0.5 || (player.horizontalCollision && rise >= -0.4)) &&
             MinecraftClientCompat.isOnGround(player) &&
             tickCounter - lastJumpTick >= JUMP_COOLDOWN_TICKS
         ) {
@@ -288,7 +291,10 @@ object PlayerMover {
             val segZ = (p1.z - p0.z).toDouble()
             val relX = feet.x - (p0.x + 0.5)
             val relZ = feet.z - (p0.z + 0.5)
-            if (relX * segX + relZ * segZ > 0.0 && abs(p0.y - feet.y) <= 1.2) {
+            // Passing the plane counts only up close: dropping a corner
+            // from afar cuts the corner cell short and snags the hitbox.
+            val nearCorner = relX * relX + relZ * relZ < 1.25 * 1.25
+            if (nearCorner && relX * segX + relZ * segZ > 0.0 && abs(p0.y - feet.y) <= 1.2) {
                 path.removeAt(0)
             } else {
                 break

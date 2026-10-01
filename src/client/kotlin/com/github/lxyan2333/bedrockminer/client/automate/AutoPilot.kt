@@ -747,7 +747,10 @@ object AutoPilot {
             )
         ) {
             warmTarget = candidate
-        } else {
+        } else if (!PathFinder.isTrapCell(level, player.blockPosition())) {
+            // Only mark the TARGET bad when the player is free to move —
+            // from inside a pit everything looks unreachable, and that is
+            // the player's problem, not the target's.
             unreachable[candidate] = tick + UNREACHABLE_SOFT_RETRY_TICKS
         }
     }
@@ -775,8 +778,8 @@ object AutoPilot {
         // the nearest few right now (microseconds each) and set aside
         // whatever nothing can walk to. The player never starts a trip
         // that is going to fail.
-        var routeChecked = 0
-        while (next != null && routeChecked < 6) {
+        val softFailed = ArrayList<BlockPos>()
+        while (next != null && softFailed.size < 6) {
             if (PathFinder.canReach(
                     level, player.blockPosition(),
                     MinecraftClientCompat.blockCenter(next), 2.0, 3,
@@ -784,9 +787,32 @@ object AutoPilot {
             ) {
                 break
             }
+            softFailed.add(next)
             unreachable[next] = tick + UNREACHABLE_SOFT_RETRY_TICKS
-            routeChecked++
             next = nearestRemainingTarget(level, player, area)
+        }
+        if (softFailed.size >= 6 || (next == null && softFailed.isNotEmpty())) {
+            // NOTHING is walkable from here: the player is boxed in — the
+            // targets are fine. Un-poison the list, then dig or pillar out
+            // of the hole instead of giving up on the whole box.
+            for (pos in softFailed) unreachable.remove(pos)
+            AutoMiner.clearCooldowns()
+            AutoMiner.requestScan()
+            if (AutoMiner.hasReachableWork(level, player)) {
+                event("bedrockminer.hud.event.escape")
+                enterPhase(Phase.MINING)
+                return
+            }
+            if (pillarItem(player) != null) {
+                event("bedrockminer.hud.event.escape")
+                escapeStage = 0
+                escapePillars = 0
+                escapeTicks = 0
+                enterPhase(Phase.ESCAPING)
+                return
+            }
+            deactivate("bedrockminer.message.autopilot.stuck")
+            return
         }
         if (next != null) {
             relocateTarget = next
