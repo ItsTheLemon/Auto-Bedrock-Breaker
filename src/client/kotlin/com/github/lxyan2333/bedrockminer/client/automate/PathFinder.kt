@@ -74,9 +74,11 @@ object PathFinder {
             }
 
             forEachNeighbor(level, start, current, maxDrop) { neighbor, cost ->
-                // Cells that recently failed in practice cost extra: the
-                // next plan naturally prefers the SECOND way around.
-                val penalty = if (neighbor in avoid) 8.0 else 0.0
+                // A cell that recently defeated the walk is effectively
+                // FORBIDDEN (not merely discouraged — a mild penalty loses
+                // to any long detour and the same failed route wins again).
+                // It stays finite so a truly only route still exists.
+                val penalty = if (neighbor in avoid) 500.0 else 0.0
                 val tentative = currentG + cost + penalty
                 if (tentative < (gScore[neighbor] ?: Double.MAX_VALUE)) {
                     gScore[neighbor] = tentative
@@ -138,6 +140,10 @@ object PathFinder {
             var cell = BlockPos(cx, curY, cz)
             if (!isStandable(level, cell)) {
                 val up = cell.above()
+                // Straight-line climbing is CARDINAL only: a diagonal climb
+                // needs the rigorous corner-sweep checks only the search
+                // does. The line politely declines and lets it route.
+                if (cx != last.x && cz != last.z) return null
                 if (isStandable(level, up) && PlayerMover.isPassable(level, BlockPos(last.x, curY + 2, last.z))) {
                     cell = up
                 } else {

@@ -121,7 +121,7 @@ object PlayerMover {
         // close, open ground and nothing else.
         val goalOffLevel = abs(goal.y - feet.y) > 1.2
         val needPlan = path.isEmpty() && (horizontal > glideRange || goalOffLevel)
-        val planBroken = path.isNotEmpty() && !nextWaypointValid(level)
+        val planBroken = path.isNotEmpty() && !nextWaypointValid(level, feet)
         val stalled = noProgressTicks == 4 || noProgressTicks == 16 || noProgressTicks == 28
         if (needPlan || planBroken || stalled) {
             // A stall means the simple route did not survive contact with
@@ -236,6 +236,19 @@ object PlayerMover {
                 } else if (!headOpen) {
                     headBlockedAhead = true
                 }
+            }
+        }
+
+        // The route wants UP but the face ahead is no longer one jumpable
+        // step: the plan is stale. Mark the spot as failed and rebuild
+        // around it RIGHT NOW — the forbidden-cell cost makes the next
+        // plan take the second path instead of re-picking this climb.
+        if (path.isNotEmpty() && rise > 0.5 && blockedAhead && !stepJumpable) {
+            path.firstOrNull()?.let { avoidCells[it] = tickCounter + AVOID_TTL }
+            if (tickCounter - lastPassageReplanTick >= 8) {
+                lastPassageReplanTick = tickCounter
+                replan(level, player, goal, allowDirect = false)
+                dropPassedWaypoints(feet)
             }
         }
 
@@ -412,9 +425,17 @@ object PlayerMover {
         return true // bottomless within maxDrop: never step off blind
     }
 
-    private fun nextWaypointValid(level: Level): Boolean {
+    private fun nextWaypointValid(level: Level, feet: Vec3): Boolean {
         val waypoint = path.firstOrNull() ?: return false
-        return isPassable(level, waypoint) && isPassable(level, waypoint.above())
+        if (!isPassable(level, waypoint) || !isPassable(level, waypoint.above())) return false
+        // A step UP must still be climbable from here: the world changes
+        // constantly while mining, and a jump with no headroom over our
+        // own head is just a shove into the wall.
+        if (waypoint.y > Mth.floor(feet.y + 0.001)) {
+            val headroom = BlockPos(Mth.floor(feet.x), Mth.floor(feet.y + 0.001) + 2, Mth.floor(feet.z))
+            if (!isPassable(level, headroom)) return false
+        }
+        return true
     }
 
     private fun reachedWaypoint(feet: Vec3, waypoint: BlockPos): Boolean {
