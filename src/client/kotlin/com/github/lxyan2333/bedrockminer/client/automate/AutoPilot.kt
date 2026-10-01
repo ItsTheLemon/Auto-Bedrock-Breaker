@@ -84,6 +84,8 @@ object AutoPilot {
     // -- relocation --
     private const val MINING_IDLE_TIMEOUT_TICKS = 150
     private const val UNREACHABLE_RETRY_TICKS = 2400L
+    /** Route-check failures retry sooner: mining keeps reshaping the ground. */
+    private const val UNREACHABLE_SOFT_RETRY_TICKS = 600L
     /** Tiny: arrival must never be stricter than what the miner can reach. */
     private const val ARRIVE_RANGE_MARGIN = 0.05
     private const val RELOCATE_STALL_TICKS = 8
@@ -499,6 +501,9 @@ object AutoPilot {
             markProgress()
             // Stand perfectly still: every active setup must stay in reach.
             PlayerMover.clear()
+            // The wait is not wasted — pick (and route-check) the next
+            // destination NOW, so the walk starts the tick mining ends.
+            warmNextDestination(level, player, area)
             return
         }
         if (hadActiveFlows) {
@@ -610,6 +615,8 @@ object AutoPilot {
             if (AutoMiner.hasActiveFlows()) {
                 PlayerMover.clear()
                 markProgress()
+                // Use the hold to pre-pick the next destination.
+                warmNextDestination(level, player, area)
                 return
             }
             planNext(level, player, area)
@@ -703,6 +710,32 @@ object AutoPilot {
         enterPhase(Phase.COLLECTING)
     }
 
+    /** Destination picked and route-verified ahead of time, during waits. */
+    private var warmTarget: BlockPos? = null
+
+    /**
+     * Think WHILE waiting, not after: during piston-drain holds this picks
+     * the nearest remaining target and verifies a route to it exists, one
+     * candidate per tick. By the time the player may move again the
+     * decision is already made — zero thinking pause between tasks.
+     */
+    private fun warmNextDestination(level: Level, player: LocalPlayer, area: AreaRestriction.Area) {
+        val cached = warmTarget
+        if (cached != null && isTargetBlock(level, cached) && !unreachable.containsKey(cached)) return
+        warmTarget = null
+        val candidate = nearestRemainingTarget(level, player, area) ?: return
+        if (candidate == lastArrivedTarget) return
+        if (PathFinder.canReach(
+                level, player.blockPosition(),
+                MinecraftClientCompat.blockCenter(candidate), 2.0, 3,
+            )
+        ) {
+            warmTarget = candidate
+        } else {
+            unreachable[candidate] = tick + UNREACHABLE_SOFT_RETRY_TICKS
+        }
+    }
+
     private fun planNext(level: Level, player: LocalPlayer, area: AreaRestriction.Area) {
         // Fast path: work is reachable from right here (typical after a
         // collection run) — resume mining in place, skip the full box scan
@@ -713,11 +746,30 @@ object AutoPilot {
             return
         }
 
-        var next = nearestRemainingTarget(level, player, area)
+        var next = warmTarget?.takeIf { isTargetBlock(level, it) && !unreachable.containsKey(it) }
+        warmTarget = null
+        if (next == null) next = nearestRemainingTarget(level, player, area)
         if (next != null && next == lastArrivedTarget) {
             // We already stood next to this block and mining could not break
             // it; set it aside instead of shuttling back and forth.
             unreachable[next] = tick + UNREACHABLE_RETRY_TICKS
+            next = nearestRemainingTarget(level, player, area)
+        }
+        // Commit ONLY to a destination a route provably exists to: check
+        // the nearest few right now (microseconds each) and set aside
+        // whatever nothing can walk to. The player never starts a trip
+        // that is going to fail.
+        var routeChecked = 0
+        while (next != null && routeChecked < 6) {
+            if (PathFinder.canReach(
+                    level, player.blockPosition(),
+                    MinecraftClientCompat.blockCenter(next), 2.0, 3,
+                )
+            ) {
+                break
+            }
+            unreachable[next] = tick + UNREACHABLE_SOFT_RETRY_TICKS
+            routeChecked++
             next = nearestRemainingTarget(level, player, area)
         }
         if (next != null) {
