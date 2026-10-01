@@ -40,6 +40,7 @@ object PathFinder {
         maxDrop: Int,
         maxNodes: Int = MAX_NODES,
         verticalTolerance: Double = 3.5,
+        avoid: Set<BlockPos> = emptySet(),
     ): Path? {
         val open = PriorityQueue<OpenEntry>(compareBy { it.f })
         val gScore = HashMap<BlockPos, Double>()
@@ -73,7 +74,10 @@ object PathFinder {
             }
 
             forEachNeighbor(level, start, current, maxDrop) { neighbor, cost ->
-                val tentative = currentG + cost
+                // Cells that recently failed in practice cost extra: the
+                // next plan naturally prefers the SECOND way around.
+                val penalty = if (neighbor in avoid) 8.0 else 0.0
+                val tentative = currentG + cost + penalty
                 if (tentative < (gScore[neighbor] ?: Double.MAX_VALUE)) {
                     gScore[neighbor] = tentative
                     cameFrom[neighbor] = current
@@ -102,6 +106,7 @@ object PathFinder {
         acceptRadius: Double,
         maxDrop: Int,
         verticalTolerance: Double,
+        avoid: Set<BlockPos> = emptySet(),
     ): List<BlockPos>? {
         val origin = resolveStart(level, start)
         val sx = origin.x + 0.5
@@ -156,6 +161,7 @@ object PathFinder {
                     cell = landing
                 }
             }
+            if (cell in avoid) return null // this exact way just failed — search around
             curY = cell.y
             last = cell
             cells.add(cell)

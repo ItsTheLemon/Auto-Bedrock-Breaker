@@ -56,6 +56,11 @@ object PlayerMover {
     private var lastJumpTick = -100L
     private var lastPassageReplanTick = -100L
 
+    /** Cells that recently defeated the walk in PRACTICE (stalls), with an
+     *  expiry tick: plans route around them, picking the second-best way. */
+    private val avoidCells = HashMap<BlockPos, Long>()
+    private const val AVOID_TTL = 300L
+
     private val path = ArrayList<BlockPos>()
     private var planFailures = 0
 
@@ -120,8 +125,13 @@ object PlayerMover {
         val stalled = noProgressTicks == 4 || noProgressTicks == 16 || noProgressTicks == 28
         if (needPlan || planBroken || stalled) {
             // A stall means the simple route did not survive contact with
-            // the terrain: go straight to the full search, never hand back
-            // the same straight line that just failed.
+            // the terrain: remember the exact step that defeated the walk,
+            // then go straight to the full search — which now prices that
+            // step out and picks the SECOND way around, never handing back
+            // the same route that just failed.
+            if (stalled) {
+                path.firstOrNull()?.let { avoidCells[it] = tickCounter + AVOID_TTL }
+            }
             replan(level, player, goal, allowDirect = noProgressTicks < 4)
             dropPassedWaypoints(feet)
             if (path.isEmpty() && (horizontal > glideRange || goalOffLevel)) {
@@ -339,20 +349,25 @@ object PlayerMover {
 
     private fun replan(level: Level, player: LocalPlayer, goal: Vec3, allowDirect: Boolean = true) {
         path.clear()
+        avoidCells.values.removeIf { it < tickCounter }
+        val avoid = if (avoidCells.isEmpty()) emptySet() else avoidCells.keys.toSet()
         // A verified-clear straight line is the ideal route and costs
         // almost nothing to check; everything else goes to the search,
         // which knows every legal move and routes AROUND obstacles —
         // walls are walked past, never walked into.
         if (allowDirect) {
             val direct = PathFinder.directWalk(
-                level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance,
+                level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance, avoid,
             )
             if (direct != null) {
                 path.addAll(direct)
                 return
             }
         }
-        val result = PathFinder.find(level, player.blockPosition(), goal, acceptRadius, maxDrop, verticalTolerance = verticalTolerance)
+        val result = PathFinder.find(
+            level, player.blockPosition(), goal, acceptRadius, maxDrop,
+            verticalTolerance = verticalTolerance, avoid = avoid,
+        )
         if (result != null) {
             path.addAll(result.waypoints)
         }

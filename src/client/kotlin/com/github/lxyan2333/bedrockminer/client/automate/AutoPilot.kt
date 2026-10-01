@@ -450,6 +450,7 @@ object AutoPilot {
                 escapeStage = 0
                 escapePillars = 0
                 escapeTicks = 0
+                escapeUntilY = Int.MIN_VALUE
                 enterPhase(Phase.ESCAPING)
             } else {
                 deactivate("bedrockminer.message.autopilot.stuck")
@@ -658,6 +659,13 @@ object AutoPilot {
             deferItem(item.id, DEFER_RETRY_TICKS)
             return
         }
+        // An item INSIDE the mining box needs no heroics while its clock
+        // is healthy: the mining itself will flatten the way to it. Only
+        // a despawn-endangered item justifies clearing a path.
+        if (area.contains(item.blockPosition()) && !isItemAtRisk(item.id)) {
+            deferItem(item.id, DEFER_WALKABLE_RETRY_TICKS)
+            return
+        }
         // Breaking through is the LAST resort, never a shortcut. If the
         // router can prove a walking route to the item exists (stairs,
         // around the wall), the walk just failed transiently — retry it
@@ -808,6 +816,7 @@ object AutoPilot {
                 escapeStage = 0
                 escapePillars = 0
                 escapeTicks = 0
+                escapeUntilY = Int.MIN_VALUE
                 enterPhase(Phase.ESCAPING)
                 return
             }
@@ -915,6 +924,17 @@ object AutoPilot {
         )
         when (PlayerMover.tick(level, player)) {
             PlayerMover.Result.STUCK -> {
+                // Walking cannot get there. If the spot is ABOVE, build up
+                // to it — placing blocks to climb is always on the table.
+                if (target.y > player.blockPosition().y + 1 && pillarItem(player) != null) {
+                    event("bedrockminer.hud.event.escape")
+                    escapeStage = 0
+                    escapePillars = 0
+                    escapeTicks = 0
+                    escapeUntilY = target.y
+                    enterPhase(Phase.ESCAPING)
+                    return
+                }
                 unreachable[target] = tick + UNREACHABLE_RETRY_TICKS
                 relocateTarget = null
                 event("bedrockminer.hud.event.target_skipped")
@@ -962,6 +982,9 @@ object AutoPilot {
     }
 
     // escaping
+    /** When set, ESCAPING is a CLIMB: pillar until the feet reach this Y
+     *  (placing blocks to ascend is always allowed), not a trap escape. */
+    private var escapeUntilY = Int.MIN_VALUE
     private var escapeStage = 0
     private var escapeStartY = 0.0
     private var escapeFeetCell: BlockPos? = null
@@ -1020,10 +1043,28 @@ object AutoPilot {
         markProgress()
         escapeTicks++
         if (escapeTicks > ESCAPE_TIMEOUT_TICKS || escapePillars >= ESCAPE_MAX_PILLARS) {
+            if (escapeUntilY != Int.MIN_VALUE) {
+                // A failed CLIMB is not fatal — set the spot aside and keep
+                // working; a failed trap escape still stops everything.
+                escapeUntilY = Int.MIN_VALUE
+                relocateTarget?.let { unreachable[it] = tick + UNREACHABLE_RETRY_TICKS }
+                relocateTarget = null
+                enterPhase(Phase.MINING)
+                return
+            }
             deactivate("bedrockminer.message.autopilot.stuck")
             return
         }
-        if (!PathFinder.isTrapCell(level, player.blockPosition())) {
+        if (escapeUntilY != Int.MIN_VALUE) {
+            if (player.blockPosition().y >= escapeUntilY) {
+                // Built up to the ledge: back to work right here.
+                escapeUntilY = Int.MIN_VALUE
+                AutoMiner.clearCooldowns()
+                AutoMiner.requestScan()
+                enterPhase(Phase.MINING)
+                return
+            }
+        } else if (!PathFinder.isTrapCell(level, player.blockPosition())) {
             // A way out exists again: back to work.
             AutoMiner.clearCooldowns()
             AutoMiner.requestScan()
