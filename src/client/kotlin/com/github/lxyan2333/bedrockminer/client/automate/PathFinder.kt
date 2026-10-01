@@ -325,19 +325,50 @@ object PathFinder {
             }
         }
 
-        // Diagonals: same level only, and only when both cardinal corners are
-        // open at body height — corner cutting is what snags the hitbox.
+        // Diagonals: flat, one UP, or one DOWN — always with both cardinal
+        // corner columns open at the height the body actually sweeps
+        // through, so a corner never snags the hitbox. Rough terrain is
+        // mostly diagonal staircases; a search that cannot climb them
+        // dead-ends at walls it should simply walk around and up.
         for ((dx, dz) in DIAGONALS) {
             val nx = current.x + dx
             val nz = current.z + dz
             if (abs(nx - origin.x) > HORIZONTAL_LIMIT || abs(nz - origin.z) > HORIZONTAL_LIMIT) continue
-            val diagonal = BlockPos(nx, current.y, nz)
-            if (!isStandable(level, diagonal)) continue
             val sideA = BlockPos(current.x + dx, current.y, current.z)
             val sideB = BlockPos(current.x, current.y, current.z + dz)
-            if (!PlayerMover.isPassable(level, sideA) || !PlayerMover.isPassable(level, sideA.above())) continue
-            if (!PlayerMover.isPassable(level, sideB) || !PlayerMover.isPassable(level, sideB.above())) continue
-            visit(diagonal, 1.45)
+            val aFeet = PlayerMover.isPassable(level, sideA)
+            val aHead = PlayerMover.isPassable(level, sideA.above())
+            val bFeet = PlayerMover.isPassable(level, sideB)
+            val bHead = PlayerMover.isPassable(level, sideB.above())
+
+            val flat = BlockPos(nx, current.y, nz)
+            if (isStandable(level, flat) && aFeet && aHead && bFeet && bHead) {
+                visit(flat, 1.45)
+                continue
+            }
+
+            // Diagonal climb: the corners must be open one level UP (the
+            // body rises while crossing them) plus headroom above the head.
+            val up = BlockPos(nx, current.y + 1, nz)
+            if (current.y - origin.y < UP_LIMIT &&
+                isStandable(level, up) &&
+                PlayerMover.isPassable(level, current.above(2)) &&
+                aHead && PlayerMover.isPassable(level, sideA.above(2)) &&
+                bHead && PlayerMover.isPassable(level, sideB.above(2))
+            ) {
+                visit(up, 2.2)
+                continue
+            }
+
+            // Diagonal step down one: corners open at the current level.
+            val down = BlockPos(nx, current.y - 1, nz)
+            if (aFeet && aHead && bFeet && bHead &&
+                PlayerMover.isPassable(level, flat) &&
+                PlayerMover.isPassable(level, flat.above()) &&
+                isStandable(level, down)
+            ) {
+                visit(down, 1.7)
+            }
         }
     }
 

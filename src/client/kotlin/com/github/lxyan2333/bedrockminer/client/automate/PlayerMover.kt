@@ -239,14 +239,27 @@ object PlayerMover {
             }
         }
 
-        // The one-block gap is a WALL for the body: route around it the
-        // moment it shows up in the walking direction, never press into it.
-        if (headBlockedAhead && path.isEmpty() &&
-            tickCounter - lastPassageReplanTick >= 8
-        ) {
-            lastPassageReplanTick = tickCounter
-            replan(level, player, goal, allowDirect = false)
-            dropPassedWaypoints(feet)
+        // A face the body cannot pass — 2-high wall, or the one-block gap
+        // with a blocked head — is NEVER pushed against. Route around it;
+        // and if no route exists, hold still and give the goal back fast
+        // instead of grinding the wall.
+        val faceBlocked = headBlockedAhead || (blockedAhead && !stepJumpable)
+        if (faceBlocked && path.isEmpty()) {
+            if (tickCounter - lastPassageReplanTick >= 8) {
+                lastPassageReplanTick = tickCounter
+                replan(level, player, goal, allowDirect = false)
+                dropPassedWaypoints(feet)
+            }
+            if (path.isEmpty()) {
+                player.setDeltaMovement(0.0, player.deltaMovement.y, 0.0)
+                player.isSprinting = false
+                noProgressTicks += 4
+                if (noProgressTicks > NO_PROGRESS_TICKS) {
+                    clear()
+                    return Result.STUCK
+                }
+                return Result.MOVING
+            }
         }
 
         if (wHorizontal > 1.0e-3) {
